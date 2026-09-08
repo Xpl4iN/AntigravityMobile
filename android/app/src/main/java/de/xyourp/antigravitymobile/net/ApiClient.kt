@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,8 +24,8 @@ class ApiClient(private val settingsProvider: () -> ConnectionSettings) {
     suspend fun health(target: ConnectionSettings = settings()): HealthResponse = json.decodeFromString(get("/api/health", target))
     suspend fun status(): RemoteSnapshot = json.decodeFromString(get("/api/status"))
     suspend fun pair(target: ConnectionSettings, code: String, name: String): PairResponse = json.decodeFromString(post("/api/pair", buildJsonObject { put("code", code); put("name", name) }.toString(), target))
-    suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null): ActionResult {
-        val body = buildJsonObject { conversationId?.let { put("conversationId", it) }; text?.let { put("text", it) }; timing?.let { put("timing", it) }; approvalId?.let { put("approvalId", it) }; model?.let { put("model", it) }; effort?.let { put("effort", it) }; providerId?.let { put("providerId", it) } }
+    suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null, contextPath: String? = null): ActionResult {
+        val body = buildJsonObject { conversationId?.let { put("conversationId", it) }; text?.let { put("text", it) }; timing?.let { put("timing", it) }; approvalId?.let { put("approvalId", it) }; model?.let { put("model", it) }; effort?.let { put("effort", it) }; providerId?.let { put("providerId", it) }; contextPath?.takeIf { it.isNotBlank() }?.let { path -> putJsonArray("context") { add(buildJsonObject { put("kind", "note"); put("path", path) }) } } }
         return json.decodeFromString(post("/api/command/$name", body.toString()))
     }
 }

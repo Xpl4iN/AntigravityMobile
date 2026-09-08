@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import de.xyourp.antigravitymobile.net.DisplayMessage
 import de.xyourp.antigravitymobile.net.RemoteConversation
@@ -40,7 +43,7 @@ import de.xyourp.antigravitymobile.net.SubAgentCard
             if (conversation == null) item { Text("No conversations yet. Tap + to create one.") }
             else items(conversation.messages, key = { it.id }) { Message(it, vm) }
         }
-        Composer(conversation?.busy == true, { vm.send(it) }, { text, immediate -> vm.steer(text, immediate) }, vm::cancel)
+        Composer(conversation?.busy == true, vm::send, vm::steer, vm::cancel)
     }
 }
 
@@ -49,11 +52,29 @@ import de.xyourp.antigravitymobile.net.SubAgentCard
     Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(message.role.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            if (message.text.isNotBlank()) Text(message.text)
+            if (message.text.isNotBlank()) MarkdownText(message.text)
             if (message.tools.isNotEmpty()) Card { Column(Modifier.padding(10.dp)) { Text("${message.tools.size} tool calls", fontWeight = FontWeight.SemiBold); message.tools.forEach { Text("${if (it.state == "success") "✓" else "•"} ${it.name}: ${it.description.orEmpty()}", style = MaterialTheme.typography.bodySmall) } } }
             message.subAgents.forEach { SubAgent(it) }
             message.approvals.filter { it.decision == "pending" }.forEach { approval -> Card { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Approval required", fontWeight = FontWeight.Bold); Text(approval.path); Text(approval.diff, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ vm.approve(approval.id, true) }) { Text("Approve") }; OutlinedButton({ vm.approve(approval.id, false) }) { Text("Reject") } } } } }
             message.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable private fun MarkdownText(markdown: String) {
+    var fenced = false
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        markdown.lines().forEach { raw ->
+            if (raw.trimStart().startsWith("```")) { fenced = !fenced; return@forEach }
+            val line = raw.trimEnd()
+            val header = line.takeWhile { it == '#' }.length.takeIf { it in 1..4 && line.getOrNull(it) == ' ' }
+            Text(
+                text = when { header != null -> line.drop(header + 1); line.startsWith("- ") -> "• ${line.drop(2)}"; else -> line },
+                fontFamily = if (fenced || line.startsWith("    ")) FontFamily.Monospace else FontFamily.Default,
+                fontWeight = if (header != null) FontWeight.Bold else FontWeight.Normal,
+                fontSize = if (header != null) (22 - header * 2).sp else MaterialTheme.typography.bodyMedium.fontSize,
+                color = if (fenced) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
@@ -67,11 +88,16 @@ import de.xyourp.antigravitymobile.net.SubAgentCard
     } }
 }
 
-@Composable private fun Composer(busy: Boolean, send: (String) -> Unit, steer: (String, Boolean) -> Unit, stop: () -> Unit) {
+@Composable private fun Composer(busy: Boolean, send: (String, String?) -> Unit, steer: (String, Boolean, String?) -> Unit, stop: () -> Unit) {
     var text by remember { mutableStateOf("") }
-    Surface(tonalElevation = 3.dp) { Row(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text(if (busy) "Steer the active turn" else "Message OAC") }, maxLines = 5)
-        if (busy) IconButton(stop) { Icon(Icons.Default.Stop, "Stop") }
-        IconButton({ val value = text.trim(); if (value.isNotEmpty()) { if (busy) steer(value, false) else send(value); text = "" } }) { Icon(Icons.AutoMirrored.Filled.Send, if (busy) "Steer after current tool" else "Send") }
+    var contextPath by remember { mutableStateOf("") }; var showContext by remember { mutableStateOf(false) }
+    Surface(tonalElevation = 3.dp) { Column(Modifier.fillMaxWidth().padding(10.dp)) {
+        if (showContext) OutlinedTextField(contextPath, { contextPath = it }, Modifier.fillMaxWidth(), label = { Text("Vault note or file path") }, singleLine = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            IconButton({ showContext = !showContext }) { Icon(Icons.Default.AttachFile, "Attach vault file") }
+            OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text(if (busy) "Steer the active turn" else "Message OAC") }, maxLines = 5)
+            if (busy) { IconButton(stop) { Icon(Icons.Default.Stop, "Stop") }; IconButton({ val value = text.trim(); if (value.isNotEmpty()) { steer(value, true, contextPath.ifBlank { null }); text = "" } }) { Icon(Icons.Default.Bolt, "Steer immediately") } }
+            IconButton({ val value = text.trim(); if (value.isNotEmpty()) { if (busy) steer(value, false, contextPath.ifBlank { null }) else send(value, contextPath.ifBlank { null }); text = "" } }) { Icon(Icons.AutoMirrored.Filled.Send, if (busy) "Steer after current tool" else "Send") }
+        }
     } }
 }

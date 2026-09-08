@@ -36,15 +36,16 @@ class ChatViewModel(private val repo: AppRepository) : ViewModel() {
         } }
     }
     fun refresh() = viewModelScope.launch { runCatching { repo.api.status() }.onSuccess { mutable.value = ChatState(it, false) }.onFailure { mutable.value = mutable.value.copy(loading = false, error = it.message) } }
-    fun send(text: String) = command("send", text = text)
-    fun steer(text: String, immediate: Boolean) = command("steer", text = text, timing = if (immediate) "immediate" else "after-current-tool")
+    fun send(text: String, contextPath: String?) = command("send", text = text, contextPath = contextPath)
+    fun steer(text: String, immediate: Boolean, contextPath: String?) = command("steer", text = text, timing = if (immediate) "immediate" else "after-current-tool", contextPath = contextPath)
     fun cancel() = command("cancel")
     fun switch(id: String) = command("switch-conversation", id)
     fun create(provider: String) = command("new", providerId = provider)
+    fun switchModel(model: String, effort: String?) = command("switch-model", model = model, effort = effort)
     fun approve(id: String, approved: Boolean) = command(if (approved) "approve" else "reject", approvalId = id)
-    private fun command(name: String, id: String? = active()?.id, text: String? = null, timing: String? = null, approvalId: String? = null, providerId: String? = null) = viewModelScope.launch {
-        runCatching { repo.api.command(name, id, text, timing, approvalId, providerId = providerId) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
-        if (name == "switch-conversation" || name == "new") refresh()
+    private fun command(name: String, id: String? = active()?.id, text: String? = null, timing: String? = null, approvalId: String? = null, providerId: String? = null, model: String? = null, effort: String? = null, contextPath: String? = null) = viewModelScope.launch {
+        runCatching { repo.api.command(name, id, text, timing, approvalId, model, effort, providerId, contextPath) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
+        if (name in setOf("switch-conversation", "new", "switch-model", "approve", "reject")) refresh()
     }
     private fun active() = mutable.value.snapshot.conversations.firstOrNull { it.id == mutable.value.snapshot.activeConversationId } ?: mutable.value.snapshot.conversations.firstOrNull()
     private fun apply(conversationId: String?, event: AgentEvent) {

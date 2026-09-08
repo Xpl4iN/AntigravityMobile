@@ -18,14 +18,16 @@ class LiveSocket(private val scope: CoroutineScope, private val api: ApiClient) 
     private var settings: ConnectionSettings? = null
     private var generation = 0
     private var retryMs = 1_000L
+    private var lastEventId: String? = null
     var appForeground: Boolean = true
     fun connect(value: ConnectionSettings) { settings = value; generation += 1; source?.cancel(); connected.value = false; if (value.isConfigured && value.deviceToken.isNotBlank()) open(generation) }
     fun reconnectNow() { settings?.let(::connect) }
     private fun open(expected: Int) {
         val target = settings ?: return
-        source = EventSources.createFactory(api.http).newEventSource(api.authed("/api/events", target).get().build(), object : EventSourceListener() {
+        val request = api.authed("/api/events", target).apply { lastEventId?.let { header("Last-Event-ID", it) } }.get().build()
+        source = EventSources.createFactory(api.http).newEventSource(request, object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) { connected.value = true; retryMs = 1_000 }
-            override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) { runCatching { ApiClient.json.decodeFromString<RemoteFrame>(data) }.getOrNull()?.let { frames.tryEmit(it) } }
+            override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) { if (id != null) lastEventId = id; runCatching { ApiClient.json.decodeFromString<RemoteFrame>(data) }.getOrNull()?.let { frames.tryEmit(it) } }
             override fun onClosed(eventSource: EventSource) = failed(expected)
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) = failed(expected)
         })

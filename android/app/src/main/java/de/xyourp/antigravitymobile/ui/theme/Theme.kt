@@ -95,19 +95,32 @@ private val LightColors = lightColorScheme(
 
 @Composable
 fun AntigravityTheme(
+    desktopTokens: Map<String, String> = emptyMap(),
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Material You: use the wallpaper-derived palette on Android 12+ when enabled,
     // otherwise fall back to the teal brand scheme.
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
-    val colorScheme = when {
+    val baseScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         darkTheme -> DarkColors
         else -> LightColors
     }
+    fun token(name: String, fallback: Color): Color = runCatching { Color(android.graphics.Color.parseColor(desktopTokens[name])) }.getOrDefault(fallback)
+    val colorScheme = if (desktopTokens.isEmpty()) baseScheme else baseScheme.copy(
+        primary = token("--interactive-accent", baseScheme.primary),
+        background = token("--background-primary", baseScheme.background),
+        surface = token("--background-primary", baseScheme.surface),
+        surfaceVariant = token("--background-secondary", baseScheme.surfaceVariant),
+        onBackground = token("--text-normal", baseScheme.onBackground),
+        onSurface = token("--text-normal", baseScheme.onSurface),
+        onSurfaceVariant = token("--text-muted", baseScheme.onSurfaceVariant),
+        outline = token("--background-modifier-border", baseScheme.outline),
+        error = token("--color-red", baseScheme.error),
+    )
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

@@ -22,7 +22,7 @@ class AppRepository(private val settingsStore: SettingsStore) {
     private var currentSettings: ConnectionSettings = ConnectionSettings()
 
     val api = ApiClient(settingsProvider = { currentSettings })
-    val socket = LiveSocket(scope)
+    val socket = LiveSocket(scope, api)
 
     val settings: Flow<ConnectionSettings> = settingsStore.settings
     val selectedModel: Flow<String?> = settingsStore.selectedModel
@@ -89,7 +89,7 @@ class AppRepository(private val settingsStore: SettingsStore) {
             settingsStore.saveDeviceToken(out.token)
             null
         } else {
-            out.detail
+            out.error ?: "Pairing failed"
         }
     }
 

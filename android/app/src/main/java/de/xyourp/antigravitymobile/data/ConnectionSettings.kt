@@ -9,8 +9,8 @@ package de.xyourp.antigravitymobile.data
  */
 data class ConnectionSettings(
     val host: String = "",
-    val restPort: Int = 5000,
-    val wsPort: Int = 5000,
+    val restPort: Int = 5117,
+    val wsPort: Int = 5117,
     /** One-time pairing token issued by the PC; sent as x-device-token. */
     val deviceToken: String = "",
 ) {
@@ -18,6 +18,7 @@ data class ConnectionSettings(
 
     val restBaseUrl: String get() = "http://$host:$restPort"
     val wsUrl: String get() = "ws://$host:$wsPort"
+    val eventsUrl: String get() = restUrl("/api/events")
 
     fun restUrl(path: String): String =
         restBaseUrl + (if (path.startsWith("/")) path else "/$path")

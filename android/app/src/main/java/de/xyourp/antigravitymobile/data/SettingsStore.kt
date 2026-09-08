@@ -11,7 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "antigravity_settings")
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "oam_settings")
 
 /** Persists connection settings and the last-selected model in DataStore. */
 class SettingsStore(private val context: Context) {
@@ -33,8 +33,8 @@ class SettingsStore(private val context: Context) {
     val settings: Flow<ConnectionSettings> = context.dataStore.data.map { p ->
         ConnectionSettings(
             host = p[Keys.HOST] ?: "",
-            restPort = p[Keys.REST_PORT] ?: 5000,
-            wsPort = p[Keys.WS_PORT] ?: 5000,
+            restPort = p[Keys.REST_PORT] ?: 5117,
+            wsPort = p[Keys.WS_PORT] ?: 5117,
             deviceToken = p[Keys.DEVICE_TOKEN] ?: "",
         )
     }

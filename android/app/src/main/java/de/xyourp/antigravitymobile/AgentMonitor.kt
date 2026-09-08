@@ -4,131 +4,41 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationChannelCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.NotificationCompat
-import de.xyourp.antigravitymobile.data.AppRepository
+import androidx.core.app.NotificationManagerCompat
+import de.xyourp.antigravitymobile.net.AgentEvent
+import de.xyourp.antigravitymobile.net.ApiClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.launch
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 
-/**
- * Process-lifetime monitor that raises a local notification only when the agent
- * needs input, finishes, errors, or a model quota runs low. The bridge detects
- * these transitions server-side (chat-stream.mjs) and pushes them as
- * `agent_event` frames; we just listen and notify — no persistent/foreground
- * "watching" notification.
- */
 object AgentMonitor {
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var started = false
-
     fun start(context: Context) {
-        if (started) return
-        started = true
+        if (started) return; started = true
         val app = context.applicationContext
-        ensureChannel(app)
+        NotificationManagerCompat.from(app).createNotificationChannel(NotificationChannelCompat.Builder(CHANNEL, NotificationManagerCompat.IMPORTANCE_HIGH).setName("OAC agent alerts").setDescription("Approvals, completed turns, and errors").build())
         val repo = (app as AntigravityApp).repository
-
-        repo.socket.events.onEach { msg ->
-            if (msg.event == "agent_event") {
-                val obj = msg.data?.jsonObject ?: return@onEach
-                val kind = obj["kind"]?.jsonPrimitive?.content ?: return@onEach
-                val message = obj["message"]?.jsonPrimitive?.content ?: ""
-                notifyAgentEvent(app, kind, message)
+        repo.socket.frames.onEach { frame -> if (frame.kind == "turn") runCatching { ApiClient.json.decodeFromJsonElement<AgentEvent>(frame.payload) }.getOrNull()?.let { event ->
+            when (event.type) {
+                "approval-request" -> notify(app, "OAC needs approval", event.reason ?: event.path.orEmpty(), frame.conversationId, event.id)
+                "turn-complete" -> notify(app, "Agent finished", "The active OAC turn completed", frame.conversationId, null)
+                "error" -> notify(app, "Agent error", event.message.orEmpty(), frame.conversationId, null)
             }
-        }.launchIn(scope)
-
-        startQuotaWatch(app, repo)
+        } }.launchIn(scope)
     }
-
-    /** PendingIntent that opens the app, optionally deep-linking to a tab. */
-    private fun openAppIntent(ctx: Context, tab: String?, requestCode: Int): PendingIntent {
-        val intent = Intent(ctx, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        if (tab != null) intent.putExtra(MainActivity.EXTRA_OPEN_TAB, tab)
-        return PendingIntent.getActivity(ctx, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
-
-    private fun notifyAgentEvent(ctx: Context, kind: String, message: String) {
-        val (title, id) = when (kind) {
-            "input_needed" -> "Antigravity needs your input" to ALERT_INPUT_ID
-            "complete" -> "Agent finished" to ALERT_DONE_ID
-            "error" -> "Antigravity hit an error" to ALERT_ERROR_ID
-            else -> return
+    private fun notify(context: Context, title: String, text: String, conversationId: String?, approvalId: String?) {
+        val open = PendingIntent.getActivity(context, title.hashCode(), Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val builder = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_stat_agent).setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true).setContentIntent(open)
+        if (approvalId != null && conversationId != null) {
+            builder.addAction(0, "Approve", AgentActionReceiver.pendingIntent(context, true, conversationId, approvalId))
+            builder.addAction(0, "Reject", AgentActionReceiver.pendingIntent(context, false, conversationId, approvalId))
         }
-        val builder = NotificationCompat.Builder(ctx, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.ic_stat_agent)
-            .setContentTitle(title)
-            .setContentText(message.ifBlank { title })
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message.ifBlank { title }))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(if (kind == "input_needed") NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_STATUS)
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent(ctx, if (kind == "error") null else "Chat", id))
-
-        if (kind == "input_needed") {
-            builder.addAction(0, "Approve", AgentActionReceiver.pendingIntent(ctx, AgentActionReceiver.ACTION_APPROVE))
-            builder.addAction(0, "Reject", AgentActionReceiver.pendingIntent(ctx, AgentActionReceiver.ACTION_REJECT))
-        }
-        runCatching { NotificationManagerCompat.from(ctx).notify(id, builder.build()) }
+        runCatching { NotificationManagerCompat.from(context).notify((conversationId + approvalId + title).hashCode(), builder.build()) }
     }
-
-    /** Poll model quota periodically and alert when a provider crosses below 10%. */
-    private fun startQuotaWatch(ctx: Context, repo: AppRepository) {
-        scope.launch {
-            val alerted = mutableSetOf<String>()
-            while (true) {
-                runCatching { repo.api.quota() }.getOrNull()?.let { q ->
-                    if (q.available) {
-                        q.models.forEach { m ->
-                            val key = m.name
-                            if (m.remainingPercent <= 10 && key !in alerted) {
-                                alerted.add(key)
-                                notifyLowQuota(ctx, m.name, m.remainingPercent)
-                            } else if (m.remainingPercent > 15) {
-                                alerted.remove(key) // recovered (hysteresis) → can alert again
-                            }
-                        }
-                    }
-                }
-                delay(10 * 60 * 1000L) // every 10 minutes
-            }
-        }
-    }
-
-    private fun notifyLowQuota(ctx: Context, modelName: String, remaining: Int) {
-        val text = "$modelName is at $remaining% remaining"
-        val n = NotificationCompat.Builder(ctx, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.ic_stat_agent)
-            .setContentTitle("Low model quota")
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent(ctx, null, ALERT_QUOTA_ID + modelName.hashCode()))
-            .build()
-        runCatching { NotificationManagerCompat.from(ctx).notify(ALERT_QUOTA_ID + modelName.hashCode(), n) }
-    }
-
-    private fun ensureChannel(ctx: Context) {
-        NotificationManagerCompat.from(ctx).createNotificationChannel(
-            NotificationChannelCompat.Builder(CHANNEL_ALERTS, NotificationManagerCompat.IMPORTANCE_HIGH)
-                .setName("Agent alerts")
-                .setDescription("Notifies when the agent needs input, finishes, or errors")
-                .build()
-        )
-    }
-
-    private const val CHANNEL_ALERTS = "agent_alerts"
-    const val ALERT_INPUT_ID = 4101
-    private const val ALERT_DONE_ID = 4102
-    private const val ALERT_ERROR_ID = 4103
-    private const val ALERT_QUOTA_ID = 4200
+    private const val CHANNEL = "oac_agent_alerts"
 }

@@ -11,7 +11,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import de.xyourp.antigravitymobile.ui.AppRoot
-import de.xyourp.antigravitymobile.ui.theme.AntigravityTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** Cross-process nav requests (e.g. a notification asking to open a tab). */
@@ -38,11 +37,7 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        setContent {
-            AntigravityTheme {
-                AppRoot(repository)
-            }
-        }
+        setContent { AppRoot(repository) }
     }
 
     override fun onNewIntent(intent: Intent) {

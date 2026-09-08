@@ -3,145 +3,71 @@ package de.xyourp.antigravitymobile.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.xyourp.antigravitymobile.data.AppRepository
-import de.xyourp.antigravitymobile.net.Artifact
-import de.xyourp.antigravitymobile.net.Conversation
-import de.xyourp.antigravitymobile.net.StructuredChat
+import de.xyourp.antigravitymobile.net.AgentEvent
+import de.xyourp.antigravitymobile.net.ApiClient
+import de.xyourp.antigravitymobile.net.ApprovalCard
+import de.xyourp.antigravitymobile.net.DisplayMessage
+import de.xyourp.antigravitymobile.net.HostPowerStatus
+import de.xyourp.antigravitymobile.net.RemoteConversation
+import de.xyourp.antigravitymobile.net.RemoteSnapshot
+import de.xyourp.antigravitymobile.net.RemoteTheme
+import de.xyourp.antigravitymobile.net.SubAgentCard
+import de.xyourp.antigravitymobile.net.ToolCard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.decodeFromJsonElement
 
-data class ChatState(
-    val chat: StructuredChat = StructuredChat(),
-    val conversations: List<Conversation> = emptyList(),
-    val loading: Boolean = true,
-    val sending: Boolean = false,
-    val error: String? = null,
-    /** Collapse the granular chain-of-thought step timeline. */
-    val hideCot: Boolean = false,
-    val showConversations: Boolean = false,
-    val openArtifact: Artifact? = null,
-)
+data class ChatState(val snapshot: RemoteSnapshot = RemoteSnapshot(), val loading: Boolean = true, val error: String? = null)
 
-/**
- * Drives the native Chat tab. Polls the bridge's structured conversation model
- * (`/api/chat/structured`) and refreshes on `chat_update` socket events — no
- * WebView. All interactions (send, action buttons, prompt answers, conversation
- * switching, artifact navigation) go through the bridge's existing endpoints.
- */
 class ChatViewModel(private val repo: AppRepository) : ViewModel() {
-
-    private val _state = MutableStateFlow(ChatState())
-    val state: StateFlow<ChatState> = _state.asStateFlow()
-
-    @Volatile private var refreshing = false
-
+    private val mutable = MutableStateFlow(ChatState())
+    val state: StateFlow<ChatState> = mutable.asStateFlow()
     init {
-        viewModelScope.launch { runCatching { repo.api.startChatStream() } }
-        load(initial = true)
-        loadConversations()
-        repo.socket.events.onEach { msg ->
-            if (msg.event == "chat_update" || msg.event == "history") load(initial = false)
-        }.launchIn(viewModelScope)
+        refresh()
+        viewModelScope.launch { repo.socket.frames.collect { frame ->
+            when (frame.kind) {
+                "snapshot" -> mutable.value = ChatState(ApiClient.json.decodeFromJsonElement(frame.payload), false)
+                "power" -> mutable.value = mutable.value.copy(snapshot = mutable.value.snapshot.copy(power = ApiClient.json.decodeFromJsonElement<HostPowerStatus>(frame.payload)))
+                "theme" -> mutable.value = mutable.value.copy(snapshot = mutable.value.snapshot.copy(theme = ApiClient.json.decodeFromJsonElement<RemoteTheme>(frame.payload)))
+                "turn" -> apply(frame.conversationId, ApiClient.json.decodeFromJsonElement(frame.payload))
+            }
+        } }
     }
-
-    fun load(initial: Boolean) {
-        if (refreshing) return
-        refreshing = true
-        viewModelScope.launch {
-            if (initial) _state.value = _state.value.copy(loading = true)
-            runCatching { repo.api.chatStructured() }
-                .onSuccess { chat ->
-                    _state.value = _state.value.copy(
-                        chat = chat,
-                        loading = false,
-                        error = if (chat.found) null else chat.error,
-                        // Keep an open artifact in sync with the latest payload.
-                        openArtifact = _state.value.openArtifact?.let { if (chat.artifact?.open == true) chat.artifact else null },
-                    )
-                }
-                .onFailure { _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to load chat") }
-            refreshing = false
-        }
+    fun refresh() = viewModelScope.launch { runCatching { repo.api.status() }.onSuccess { mutable.value = ChatState(it, false) }.onFailure { mutable.value = mutable.value.copy(loading = false, error = it.message) } }
+    fun send(text: String) = command("send", text = text)
+    fun steer(text: String, immediate: Boolean) = command("steer", text = text, timing = if (immediate) "immediate" else "after-current-tool")
+    fun cancel() = command("cancel")
+    fun switch(id: String) = command("switch-conversation", id)
+    fun create(provider: String) = command("new", providerId = provider)
+    fun approve(id: String, approved: Boolean) = command(if (approved) "approve" else "reject", approvalId = id)
+    private fun command(name: String, id: String? = active()?.id, text: String? = null, timing: String? = null, approvalId: String? = null, providerId: String? = null) = viewModelScope.launch {
+        runCatching { repo.api.command(name, id, text, timing, approvalId, providerId = providerId) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
+        if (name == "switch-conversation" || name == "new") refresh()
     }
-
-    fun loadConversations() {
-        viewModelScope.launch {
-            runCatching { repo.api.chatConversations() }
-                .onSuccess { _state.value = _state.value.copy(conversations = it.conversations) }
-        }
+    private fun active() = mutable.value.snapshot.conversations.firstOrNull { it.id == mutable.value.snapshot.activeConversationId } ?: mutable.value.snapshot.conversations.firstOrNull()
+    private fun apply(conversationId: String?, event: AgentEvent) {
+        if (conversationId == null) return
+        val snapshot = mutable.value.snapshot
+        val conversations = snapshot.conversations.map { conversation -> if (conversation.id != conversationId) conversation else reduce(conversation, event) }
+        mutable.value = mutable.value.copy(snapshot = snapshot.copy(conversations = conversations), error = event.message.takeIf { event.type == "error" })
     }
-
-    fun send(text: String) {
-        val msg = text.trim()
-        if (msg.isEmpty()) return
-        _state.value = _state.value.copy(sending = true)
-        viewModelScope.launch {
-            runCatching { repo.api.cdpInject(msg, submit = true) }
-            _state.value = _state.value.copy(sending = false)
-            kotlinx.coroutines.delay(400)
-            load(initial = false)
+    private fun reduce(c: RemoteConversation, e: AgentEvent): RemoteConversation {
+        val messages = c.messages.toMutableList()
+        fun assistant(): Int { val found = messages.indexOfLast { it.role == "assistant" && it.streaming }; if (found >= 0) return found; messages += DisplayMessage("remote-${System.currentTimeMillis()}", "assistant", streaming = true); return messages.lastIndex }
+        val index = assistant(); var message = messages[index]
+        when (e.type) {
+            "assistant-delta" -> message = message.copy(text = message.text + e.text.orEmpty())
+            "assistant-message" -> message = message.copy(text = message.text + e.text.orEmpty())
+            "tool-start" -> message = message.copy(tools = message.tools + ToolCard(e.id.orEmpty(), e.name.orEmpty(), e.description, input = e.input))
+            "tool-update" -> message = message.copy(tools = message.tools.map { if (it.id == e.id) it.copy(updates = it.updates + e.text.orEmpty()) else it })
+            "tool-end" -> message = message.copy(tools = message.tools.map { if (it.id == e.id) it.copy(state = if (e.success == true) "success" else "error", output = e.output) else it })
+            "approval-request" -> message = message.copy(approvals = message.approvals + ApprovalCard(e.id.orEmpty(), e.path.orEmpty(), e.diff.orEmpty()))
+            "subagent-update" -> { val card = SubAgentCard(e.id.orEmpty(), name = e.name ?: "Sub-agent", task = e.task, state = e.state ?: "running", detail = e.detail, result = e.result, error = e.error, model = e.model, tokens = e.tokens, toolCalls = e.toolCalls, timeline = e.timeline, startedAt = e.startedAt ?: System.currentTimeMillis(), endedAt = e.endedAt); message = message.copy(subAgents = message.subAgents.filterNot { it.id == card.id } + card) }
+            "turn-complete", "error" -> message = message.copy(streaming = false, error = e.message)
         }
-    }
-
-    fun clickAction(xpath: String, label: String) {
-        viewModelScope.launch {
-            runCatching { repo.api.cdpClick(xpath, label) }
-            kotlinx.coroutines.delay(400)
-            load(initial = false)
-        }
-    }
-
-    fun answerOption(optionXpath: String, submitXpath: String?) =
-        answer { repo.api.answerPrompt("option", optionXpath = optionXpath, submitXpath = submitXpath) }
-
-    fun answerOther(otherXpath: String, text: String, submitXpath: String?) =
-        answer { repo.api.answerPrompt("other", otherXpath = otherXpath, text = text, submitXpath = submitXpath) }
-
-    fun answerSkip(skipXpath: String) =
-        answer { repo.api.answerPrompt("skip", skipXpath = skipXpath) }
-
-    private fun answer(call: suspend () -> Unit) {
-        viewModelScope.launch {
-            runCatching { call() }
-            kotlinx.coroutines.delay(400)
-            load(initial = false)
-        }
-    }
-
-    fun toggleCot() { _state.value = _state.value.copy(hideCot = !_state.value.hideCot) }
-
-    fun openConversations() { loadConversations(); _state.value = _state.value.copy(showConversations = true) }
-    fun closeConversations() { _state.value = _state.value.copy(showConversations = false) }
-
-    fun switchConversation(id: String) {
-        _state.value = _state.value.copy(showConversations = false)
-        viewModelScope.launch {
-            runCatching { repo.api.switchConversation(id) }
-            kotlinx.coroutines.delay(500)
-            load(initial = false); loadConversations()
-        }
-    }
-
-    fun newConversation() {
-        _state.value = _state.value.copy(showConversations = false)
-        viewModelScope.launch {
-            runCatching { repo.api.newConversation() }
-            kotlinx.coroutines.delay(500)
-            load(initial = false); loadConversations()
-        }
-    }
-
-    fun openArtifact(artifact: Artifact) { _state.value = _state.value.copy(openArtifact = artifact) }
-    fun closeArtifact() { _state.value = _state.value.copy(openArtifact = null) }
-
-    fun navArtifact(xpath: String) {
-        viewModelScope.launch {
-            runCatching { repo.api.cdpClick(xpath, "artifact-nav") }
-            kotlinx.coroutines.delay(400)
-            load(initial = false)
-        }
+        messages[index] = message
+        return c.copy(messages = messages, busy = e.type != "turn-complete" && e.type != "error")
     }
 }

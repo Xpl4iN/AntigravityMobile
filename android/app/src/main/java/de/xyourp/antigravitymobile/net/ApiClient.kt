@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 class ApiClient(private val settingsProvider: () -> ConnectionSettings) {
@@ -23,6 +24,7 @@ class ApiClient(private val settingsProvider: () -> ConnectionSettings) {
     private suspend fun post(path: String, body: String, target: ConnectionSettings = settings()) = withContext(Dispatchers.IO) { http.newCall(authed(path, target).post(body.toRequestBody(JSON)).build()).execute().use { r -> val value = r.body?.string().orEmpty(); if (!r.isSuccessful) throw IOException(value.ifBlank { "HTTP ${r.code}" }); value } }
     suspend fun health(target: ConnectionSettings = settings()): HealthResponse = json.decodeFromString(get("/api/health", target))
     suspend fun status(): RemoteSnapshot = json.decodeFromString(get("/api/status"))
+    suspend fun vaultFile(path: String): VaultFileResponse = json.decodeFromString(get("/api/file?path=${URLEncoder.encode(path, Charsets.UTF_8.name())}"))
     suspend fun pair(target: ConnectionSettings, code: String, name: String): PairResponse = json.decodeFromString(post("/api/pair", buildJsonObject { put("code", code); put("name", name) }.toString(), target))
     suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null, contextPath: String? = null): ActionResult {
         val body = buildJsonObject { conversationId?.let { put("conversationId", it) }; text?.let { put("text", it) }; timing?.let { put("timing", it) }; approvalId?.let { put("approvalId", it) }; model?.let { put("model", it) }; effort?.let { put("effort", it) }; providerId?.let { put("providerId", it) }; contextPath?.takeIf { it.isNotBlank() }?.let { path -> putJsonArray("context") { add(buildJsonObject { put("kind", "note"); put("path", path) }) } } }

@@ -18,7 +18,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:configChanges="orientation|screenSize|uiMode"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.AntigravityMobile">
             <intent-filter>

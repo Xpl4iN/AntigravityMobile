@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.decodeFromJsonElement
 
-data class ChatState(val snapshot: RemoteSnapshot = RemoteSnapshot(), val loading: Boolean = true, val error: String? = null)
+data class ChatState(val snapshot: RemoteSnapshot = RemoteSnapshot(), val loading: Boolean = true, val error: String? = null, val openFile: de.xyourp.antigravitymobile.net.VaultFileResponse? = null, val fileLoading: Boolean = false)
 
 class ChatViewModel(private val repo: AppRepository) : ViewModel() {
     private val mutable = MutableStateFlow(ChatState())
@@ -40,9 +40,11 @@ class ChatViewModel(private val repo: AppRepository) : ViewModel() {
     fun steer(text: String, immediate: Boolean, contextPath: String?) = command("steer", text = text, timing = if (immediate) "immediate" else "after-current-tool", contextPath = contextPath)
     fun cancel() = command("cancel")
     fun switch(id: String) = command("switch-conversation", id)
-    fun create(provider: String) = command("new", providerId = provider)
-    fun switchModel(model: String, effort: String?) = command("switch-model", model = model, effort = effort)
+    fun create(provider: String, model: String?, effort: String?) = command("new", providerId = provider, model = model, effort = effort)
+    fun switchModel(provider: String, model: String, effort: String?) = command("switch-model", model = model, effort = effort, providerId = provider)
     fun approve(id: String, approved: Boolean) = command(if (approved) "approve" else "reject", approvalId = id)
+    fun openFile(path: String) = viewModelScope.launch { mutable.value = mutable.value.copy(fileLoading = true); runCatching { repo.api.vaultFile(path) }.onSuccess { mutable.value = mutable.value.copy(openFile = it, fileLoading = false) }.onFailure { mutable.value = mutable.value.copy(fileLoading = false, error = it.message) } }
+    fun closeFile() { mutable.value = mutable.value.copy(openFile = null) }
     private fun command(name: String, id: String? = active()?.id, text: String? = null, timing: String? = null, approvalId: String? = null, providerId: String? = null, model: String? = null, effort: String? = null, contextPath: String? = null) = viewModelScope.launch {
         runCatching { repo.api.command(name, id, text, timing, approvalId, model, effort, providerId, contextPath) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
         if (name in setOf("switch-conversation", "new", "switch-model", "approve", "reject")) refresh()
@@ -65,7 +67,7 @@ class ChatViewModel(private val repo: AppRepository) : ViewModel() {
             "tool-update" -> message = message.copy(tools = message.tools.map { if (it.id == e.id) it.copy(updates = it.updates + e.text.orEmpty()) else it })
             "tool-end" -> message = message.copy(tools = message.tools.map { if (it.id == e.id) it.copy(state = if (e.success == true) "success" else "error", output = e.output) else it })
             "approval-request" -> message = message.copy(approvals = message.approvals + ApprovalCard(e.id.orEmpty(), e.path.orEmpty(), e.diff.orEmpty()))
-            "subagent-update" -> { val card = SubAgentCard(e.id.orEmpty(), name = e.name ?: "Sub-agent", task = e.task, state = e.state ?: "running", detail = e.detail, result = e.result, error = e.error, model = e.model, tokens = e.tokens, toolCalls = e.toolCalls, timeline = e.timeline, startedAt = e.startedAt ?: System.currentTimeMillis(), endedAt = e.endedAt); message = message.copy(subAgents = message.subAgents.filterNot { it.id == card.id } + card) }
+            "subagent-update" -> { val old = message.subAgents.firstOrNull { it.id == e.id }; val card = SubAgentCard(e.id.orEmpty(), parentId = old?.parentId, name = e.name ?: old?.name ?: "Sub-agent", task = e.task ?: old?.task, state = e.state ?: old?.state ?: "running", detail = e.detail ?: old?.detail, result = e.result ?: old?.result, error = e.error ?: old?.error, model = e.model ?: old?.model, tokens = e.tokens ?: old?.tokens, toolCalls = e.toolCalls ?: old?.toolCalls, timeline = if (e.timeline.isNotEmpty()) e.timeline else old?.timeline.orEmpty(), startedAt = e.startedAt ?: old?.startedAt ?: System.currentTimeMillis(), endedAt = e.endedAt ?: old?.endedAt); message = message.copy(subAgents = message.subAgents.filterNot { it.id == card.id } + card) }
             "turn-complete", "error" -> message = message.copy(streaming = false, error = e.message)
         }
         messages[index] = message

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -23,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,11 +36,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.xyourp.antigravitymobile.net.DisplayMessage
 import de.xyourp.antigravitymobile.net.RemoteConversation
 import de.xyourp.antigravitymobile.net.SubAgentCard
 
 @Composable fun ChatScreen(conversation: RemoteConversation?, vm: ChatViewModel, modifier: Modifier = Modifier) {
+    val state by vm.state.collectAsStateWithLifecycle()
     Column(modifier) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
             if (conversation == null) item { Text("No conversations yet. Tap + to create one.") }
@@ -45,6 +50,7 @@ import de.xyourp.antigravitymobile.net.SubAgentCard
         }
         Composer(conversation?.busy == true, vm::send, vm::steer, vm::cancel)
     }
+    state.openFile?.let { file -> AlertDialog(onDismissRequest = vm::closeFile, title = { Text(file.name) }, text = { LazyColumn { item { Text(file.path, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary); HorizontalDivider(Modifier.padding(vertical = 8.dp)); MarkdownText(file.content) } } }, confirmButton = { TextButton(vm::closeFile) { Text("Close") } }) }
 }
 
 @Composable private fun Message(message: DisplayMessage, vm: ChatViewModel) {
@@ -53,6 +59,11 @@ import de.xyourp.antigravitymobile.net.SubAgentCard
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(message.role.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             if (message.text.isNotBlank()) MarkdownText(message.text)
+            val cited = remember(message.text, message.context) { (Regex("\\[\\[([^]|#]+)").findAll(message.text).map { it.groupValues[1] } + message.context.asSequence().map { it.path }).distinct().toList() }
+            if (cited.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Vault references", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                cited.forEach { path -> TextButton({ vm.openFile(path) }) { Text("Open $path", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) } }
+            }
             if (message.tools.isNotEmpty()) Card { Column(Modifier.padding(10.dp)) { Text("${message.tools.size} tool calls", fontWeight = FontWeight.SemiBold); message.tools.forEach { Text("${if (it.state == "success") "✓" else "•"} ${it.name}: ${it.description.orEmpty()}", style = MaterialTheme.typography.bodySmall) } } }
             message.subAgents.forEach { SubAgent(it) }
             message.approvals.filter { it.decision == "pending" }.forEach { approval -> Card { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Approval required", fontWeight = FontWeight.Bold); Text(approval.path); Text(approval.diff, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ vm.approve(approval.id, true) }) { Text("Approve") }; OutlinedButton({ vm.approve(approval.id, false) }) { Text("Reject") } } } } }
@@ -91,7 +102,7 @@ import de.xyourp.antigravitymobile.net.SubAgentCard
 @Composable private fun Composer(busy: Boolean, send: (String, String?) -> Unit, steer: (String, Boolean, String?) -> Unit, stop: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var contextPath by remember { mutableStateOf("") }; var showContext by remember { mutableStateOf(false) }
-    Surface(tonalElevation = 3.dp) { Column(Modifier.fillMaxWidth().padding(10.dp)) {
+    Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) { Column(Modifier.fillMaxWidth().padding(10.dp)) {
         if (showContext) OutlinedTextField(contextPath, { contextPath = it }, Modifier.fillMaxWidth(), label = { Text("Vault note or file path") }, singleLine = true)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             IconButton({ showContext = !showContext }) { Icon(Icons.Default.AttachFile, "Attach vault file") }

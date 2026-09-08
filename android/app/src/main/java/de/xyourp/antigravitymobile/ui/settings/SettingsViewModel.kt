@@ -17,6 +17,7 @@ class SettingsViewModel(private val repo: AppRepository) : ViewModel() {
     fun host(value: String) { mutable.value = mutable.value.copy(host = value.trim(), message = null) }
     fun port(value: String) { mutable.value = mutable.value.copy(port = value.filter(Char::isDigit).take(5), message = null) }
     fun code(value: String) { mutable.value = mutable.value.copy(pairCode = value.filter(Char::isDigit).take(6), message = null) }
+    fun replacePairing() { mutable.value = mutable.value.copy(paired = false, pairCode = "", message = "Enter the new bridge pairing code") }
     private fun target() = ConnectionSettings(mutable.value.host, mutable.value.port.toIntOrNull() ?: 5117, mutable.value.port.toIntOrNull() ?: 5117)
     fun test() = viewModelScope.launch { mutable.value = mutable.value.copy(busy = true); runCatching { repo.api.health(target()) }.onSuccess { mutable.value = mutable.value.copy(busy = false, message = if (it.ok) "OAC bridge found, protocol ${it.protocolVersion}" else "Unexpected bridge response") }.onFailure { mutable.value = mutable.value.copy(busy = false, message = it.message) } }
     fun pair() = viewModelScope.launch {

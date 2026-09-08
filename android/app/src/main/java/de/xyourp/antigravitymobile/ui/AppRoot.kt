@@ -21,7 +21,7 @@ import de.xyourp.antigravitymobile.ui.theme.AntigravityTheme
     val chat by chatVm.state.collectAsStateWithLifecycle()
     AntigravityTheme(chat.snapshot.theme.tokens) {
         if (settings == null) return@AntigravityTheme
-        if (showSettings || settings?.isConfigured != true || !repo.isPaired()) SettingsScreen(settingsVm) { showSettings = false }
+        if (showSettings || settings?.isConfigured != true || settings?.deviceToken.isNullOrBlank()) SettingsScreen(settingsVm) { showSettings = false }
         else MainScaffold(chatVm, repo.socket.connected.collectAsStateWithLifecycle().value) { showSettings = true }
     }
 }

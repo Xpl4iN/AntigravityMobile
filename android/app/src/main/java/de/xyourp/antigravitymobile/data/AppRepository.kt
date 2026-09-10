@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.onEach
  * wires them into the [ApiClient] and [LiveSocket], and reconnects the socket
  * whenever the connection settings change.
  */
-class AppRepository(private val settingsStore: SettingsStore) {
+class AppRepository(private val settingsStore: SettingsStore, val cacheStore: CacheStore? = null) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -26,6 +26,7 @@ class AppRepository(private val settingsStore: SettingsStore) {
 
     val settings: Flow<ConnectionSettings> = settingsStore.settings
     val selectedModel: Flow<String?> = settingsStore.selectedModel
+    val displayPreferences: Flow<DisplayPreferences> = settingsStore.displayPreferences
     
     val cursorSize: Flow<Int> = settingsStore.cursorSize
     val cursorAlpha: Flow<Float> = settingsStore.cursorAlpha
@@ -75,6 +76,10 @@ class AppRepository(private val settingsStore: SettingsStore) {
 
     suspend fun saveLastTab(tab: String) {
         settingsStore.saveLastTab(tab)
+    }
+
+    suspend fun saveDisplayPreferences(value: DisplayPreferences) {
+        settingsStore.saveDisplayPreferences(value)
     }
 
     /**

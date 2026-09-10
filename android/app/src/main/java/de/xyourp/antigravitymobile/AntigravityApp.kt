@@ -11,7 +11,9 @@ class AntigravityApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        repository = AppRepository(SettingsStore(this))
+        val settingsStore = SettingsStore(this)
+        val cacheStore = de.xyourp.antigravitymobile.data.CacheStore(this)
+        repository = AppRepository(settingsStore, cacheStore)
         // Watch for agent events / low quota and post alert notifications.
         // No foreground service, so there's no persistent "watching" notification.
         AgentMonitor.start(this)

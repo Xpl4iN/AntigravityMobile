@@ -7,11 +7,19 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "oam_settings")
+
+data class DisplayPreferences(
+    val autoScroll: Boolean = true,
+    val toolDisplay: String = "names",
+    val autoExpandSubAgents: Boolean = false,
+    val autoExpandReasoning: Boolean = false,
+)
 
 /** Persists connection settings and the last-selected model in DataStore. */
 class SettingsStore(private val context: Context) {
@@ -28,6 +36,10 @@ class SettingsStore(private val context: Context) {
         val CURSOR_OFFSET_Y = floatPreferencesKey("cursor_offset_y")
         val IS_MOUSE_MODE = androidx.datastore.preferences.core.booleanPreferencesKey("is_mouse_mode")
         val LAST_TAB = stringPreferencesKey("last_tab")
+        val AUTO_SCROLL = booleanPreferencesKey("auto_scroll")
+        val TOOL_DISPLAY = stringPreferencesKey("tool_display")
+        val AUTO_EXPAND_SUBAGENTS = booleanPreferencesKey("auto_expand_subagents")
+        val AUTO_EXPAND_REASONING = booleanPreferencesKey("auto_expand_reasoning")
     }
 
     val settings: Flow<ConnectionSettings> = context.dataStore.data.map { p ->
@@ -40,6 +52,12 @@ class SettingsStore(private val context: Context) {
     }
 
     val selectedModel: Flow<String?> = context.dataStore.data.map { it[Keys.MODEL] }
+    val displayPreferences: Flow<DisplayPreferences> = context.dataStore.data.map { p -> DisplayPreferences(
+        autoScroll = p[Keys.AUTO_SCROLL] ?: true,
+        toolDisplay = p[Keys.TOOL_DISPLAY] ?: "names",
+        autoExpandSubAgents = p[Keys.AUTO_EXPAND_SUBAGENTS] ?: false,
+        autoExpandReasoning = p[Keys.AUTO_EXPAND_REASONING] ?: false,
+    ) }
 
     val cursorSize: Flow<Int> = context.dataStore.data.map { it[Keys.CURSOR_SIZE] ?: 32 }
     val cursorAlpha: Flow<Float> = context.dataStore.data.map { it[Keys.CURSOR_ALPHA] ?: 1.0f }
@@ -87,5 +105,14 @@ class SettingsStore(private val context: Context) {
 
     suspend fun saveLastTab(tab: String) {
         context.dataStore.edit { it[Keys.LAST_TAB] = tab }
+    }
+
+    suspend fun saveDisplayPreferences(value: DisplayPreferences) {
+        context.dataStore.edit { p ->
+            p[Keys.AUTO_SCROLL] = value.autoScroll
+            p[Keys.TOOL_DISPLAY] = value.toolDisplay
+            p[Keys.AUTO_EXPAND_SUBAGENTS] = value.autoExpandSubAgents
+            p[Keys.AUTO_EXPAND_REASONING] = value.autoExpandReasoning
+        }
     }
 }

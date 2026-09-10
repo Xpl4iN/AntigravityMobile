@@ -25,9 +25,112 @@ class ApiClient(private val settingsProvider: () -> ConnectionSettings) {
     suspend fun health(target: ConnectionSettings = settings()): HealthResponse = json.decodeFromString(get("/api/health", target))
     suspend fun status(): RemoteSnapshot = json.decodeFromString(get("/api/status"))
     suspend fun vaultFile(path: String): VaultFileResponse = json.decodeFromString(get("/api/file?path=${URLEncoder.encode(path, Charsets.UTF_8.name())}"))
+    suspend fun gitStatus(): GitStatusResponse = json.decodeFromString(get("/api/git"))
+    suspend fun gitDiff(path: String? = null): GitDiffResponse = json.decodeFromString(get(if (path.isNullOrBlank()) "/api/git/diff" else "/api/git/diff?path=${URLEncoder.encode(path, Charsets.UTF_8.name())}"))
+    suspend fun listFiles(folder: String? = null, query: String? = null): VaultFilesResponse {
+        val params = mutableListOf<String>()
+        folder?.takeIf { it.isNotBlank() }?.let { params.add("folder=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        query?.takeIf { it.isNotBlank() }?.let { params.add("query=${URLEncoder.encode(it, Charsets.UTF_8.name())}") }
+        val queryStr = if (params.isNotEmpty()) "?${params.joinToString("&")}" else ""
+        return json.decodeFromString(get("/api/files$queryStr"))
+    }
     suspend fun pair(target: ConnectionSettings, code: String, name: String): PairResponse = json.decodeFromString(post("/api/pair", buildJsonObject { put("code", code); put("name", name) }.toString(), target))
-    suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null, contextPath: String? = null): ActionResult {
-        val body = buildJsonObject { conversationId?.let { put("conversationId", it) }; text?.let { put("text", it) }; timing?.let { put("timing", it) }; approvalId?.let { put("approvalId", it) }; model?.let { put("model", it) }; effort?.let { put("effort", it) }; providerId?.let { put("providerId", it) }; contextPath?.takeIf { it.isNotBlank() }?.let { path -> putJsonArray("context") { add(buildJsonObject { put("kind", "note"); put("path", path) }) } } }
+    fun deviceToken() = settings().deviceToken
+    fun attachmentUrl(path: String) = settings().restUrl("/api/attachment?path=${URLEncoder.encode(path, Charsets.UTF_8.name())}")
+
+    suspend fun uploadAttachment(name: String, mime: String, bytes: ByteArray): UploadResponse {
+        val mediaType = mime.toMediaType()
+        val encodedName = URLEncoder.encode(name, Charsets.UTF_8.name())
+        val req = authed("/api/upload")
+            .header("x-file-name", encodedName)
+            .header("Content-Type", mime)
+            .post(bytes.toRequestBody(mediaType))
+            .build()
+        val responseBody = withContext(Dispatchers.IO) {
+            http.newCall(req).execute().use { r ->
+                val body = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw IOException(body.ifBlank { "HTTP ${r.code}" })
+                body
+            }
+        }
+        return json.decodeFromString(responseBody)
+    }
+
+    suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null, contextPath: String? = null, attachments: List<ContextReference> = emptyList(), index: Int? = null): ActionResult {
+        val body = buildJsonObject { 
+            conversationId?.let { put("conversationId", it) }
+            text?.let { put("text", it) }
+            timing?.let { put("timing", it) }
+            approvalId?.let { put("approvalId", it) }
+            model?.let { put("model", it) }
+            effort?.let { put("effort", it) }
+            providerId?.let { put("providerId", it) }
+            index?.let { put("index", it) }
+            val contextItems = mutableListOf<kotlinx.serialization.json.JsonObject>()
+            contextPath?.takeIf { it.isNotBlank() }?.let { path ->
+                contextItems.add(buildJsonObject { put("kind", "note"); put("path", path) })
+            }
+            attachments.forEach { att ->
+                contextItems.add(buildJsonObject {
+                    put("kind", att.kind)
+                    put("path", att.path)
+                    att.name?.let { put("name", it) }
+                    att.mime?.let { put("mime", it) }
+                })
+            }
+            if (contextItems.isNotEmpty()) {
+                putJsonArray("context") {
+                    contextItems.forEach { add(it) }
+                }
+            }
+        }
         return json.decodeFromString(post("/api/command/$name", body.toString()))
+    }
+
+    suspend fun draftHandover(conversationId: String?, extraPrompt: String? = null): HandoverResponse {
+        val body = buildJsonObject {
+            conversationId?.let { put("conversationId", it) }
+            extraPrompt?.let { put("extraPrompt", it) }
+        }
+        return json.decodeFromString(post("/api/handover", body.toString()))
+    }
+
+    suspend fun commitChanges(message: String, push: Boolean = false): GitCommitResponse {
+        val body = buildJsonObject {
+            put("message", message)
+            put("push", push)
+        }
+        return json.decodeFromString(post("/api/git/commit", body.toString()))
+    }
+
+    suspend fun pushChanges(): GitPushResponse {
+        return json.decodeFromString(post("/api/git/push", "{}"))
+    }
+
+    suspend fun generateCommitMessage(conversationId: String?): GitGenerateCommitResponse {
+        val body = buildJsonObject {
+            conversationId?.let { put("conversationId", it) }
+        }
+        return json.decodeFromString(post("/api/git/generate-commit", body.toString()))
+    }
+
+    suspend fun getQuota(conversationId: String? = null, force: Boolean = false): QuotaResponse {
+        val query = buildList {
+            conversationId?.let { add("conversationId=$it") }
+            if (force) add("force=true")
+        }.joinToString("&").let { if (it.isNotEmpty()) "?$it" else "" }
+        return json.decodeFromString(get("/api/quota$query"))
+    }
+
+    suspend fun refreshQuota(conversationId: String? = null): QuotaResponse {
+        val body = buildJsonObject {
+            conversationId?.let { put("conversationId", it) }
+        }
+        return json.decodeFromString(post("/api/quota/refresh", body.toString()))
+    }
+
+    suspend fun listSkills(provider: String? = null): SkillsResponse {
+        val query = if (!provider.isNullOrBlank()) "?provider=$provider" else ""
+        return json.decodeFromString(get("/api/skills$query"))
     }
 }

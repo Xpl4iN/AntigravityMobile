@@ -1,114 +1,2393 @@
 package de.xyourp.antigravitymobile.ui.chat
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.imePadding
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import android.webkit.WebView
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import de.xyourp.antigravitymobile.net.DisplayMessage
-import de.xyourp.antigravitymobile.net.RemoteConversation
-import de.xyourp.antigravitymobile.net.SubAgentCard
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import de.xyourp.antigravitymobile.data.DisplayPreferences
+import de.xyourp.antigravitymobile.net.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-@Composable fun ChatScreen(conversation: RemoteConversation?, vm: ChatViewModel, modifier: Modifier = Modifier) {
+sealed class MarkdownBlock {
+    data class Paragraph(val text: String) : MarkdownBlock()
+    data class Header(val level: Int, val text: String) : MarkdownBlock()
+    data class Bullet(val text: String) : MarkdownBlock()
+    data class Ordered(val index: String, val text: String) : MarkdownBlock()
+    data class Code(val language: String?, val code: String) : MarkdownBlock()
+    data class Table(val headers: List<String>, val alignments: List<TableAlignment>, val rows: List<List<String>>) : MarkdownBlock()
+    data class Image(val alt: String, val url: String) : MarkdownBlock()
+    data class Callout(val type: String, val title: String, val content: String) : MarkdownBlock()
+    data class Mermaid(val code: String) : MarkdownBlock()
+    data class TaskItem(val checked: Boolean, val text: String) : MarkdownBlock()
+    data class MathBlock(val math: String) : MarkdownBlock()
+    data class ChoiceCard(val title: String, val prompt: String?, val options: List<ChoiceOption>) : MarkdownBlock()
+}
+
+data class ChoiceOption(val value: String, val label: String)
+
+enum class TableAlignment { LEFT, CENTER, RIGHT }
+
+data class PendingImage(
+    val name: String,
+    val mime: String,
+    val bytes: ByteArray,
+    val uri: Uri? = null
+)
+
+@Composable fun ChatScreen(conversation: RemoteConversation?, vm: ChatViewModel, display: DisplayPreferences, modifier: Modifier = Modifier) {
     val state by vm.state.collectAsStateWithLifecycle()
-    Column(modifier) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-            if (conversation == null) item { Text("No conversations yet. Tap + to create one.") }
-            else items(conversation.messages, key = { it.id }) { Message(it, vm) }
-        }
-        Composer(conversation?.busy == true, vm::send, vm::steer, vm::cancel)
+    val messages = conversation?.messages.orEmpty()
+    val list = remember(conversation?.id) {
+        LazyListState(firstVisibleItemIndex = if (messages.isNotEmpty()) messages.lastIndex else 0)
     }
-    state.openFile?.let { file -> AlertDialog(onDismissRequest = vm::closeFile, title = { Text(file.name) }, text = { LazyColumn { item { Text(file.path, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary); HorizontalDivider(Modifier.padding(vertical = 8.dp)); MarkdownText(file.content) } } }, confirmButton = { TextButton(vm::closeFile) { Text("Close") } }) }
-}
+    val scope = rememberCoroutineScope()
+    var hasInitialScrolled by remember(conversation?.id) { mutableStateOf(false) }
 
-@Composable private fun Message(message: DisplayMessage, vm: ChatViewModel) {
-    val user = message.role == "user"
-    Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(message.role.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            if (message.text.isNotBlank()) MarkdownText(message.text)
-            val cited = remember(message.text, message.context) { (Regex("\\[\\[([^]|#]+)").findAll(message.text).map { it.groupValues[1] } + message.context.asSequence().map { it.path }).distinct().toList() }
-            if (cited.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Vault references", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                cited.forEach { path -> TextButton({ vm.openFile(path) }) { Text("Open $path", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) } }
+    LaunchedEffect(conversation?.id, messages.size) {
+        if (!hasInitialScrolled && messages.isNotEmpty()) {
+            list.scrollToItem(messages.lastIndex)
+            hasInitialScrolled = true
+        }
+    }
+
+    val nearBottom by remember { derivedStateOf { val info = list.layoutInfo; info.totalItemsCount == 0 || info.visibleItemsInfo.lastOrNull()?.index.orEmptyIndex() >= info.totalItemsCount - 2 } }
+    val fingerprint = messages.lastOrNull()?.let { "${it.id}:${it.text.length}:${it.streaming}:${it.subAgents.sumOf { agent -> agent.timeline.size }}" }
+    LaunchedEffect(fingerprint) { if (display.autoScroll && nearBottom && messages.isNotEmpty()) list.animateScrollToItem(messages.lastIndex) }
+
+    Box(modifier) {
+        Column(Modifier.fillMaxSize()) {
+            if (state.isOfflineCached) {
+                OfflineBanner(onRetry = { vm.refresh() })
             }
-            if (message.tools.isNotEmpty()) Card { Column(Modifier.padding(10.dp)) { Text("${message.tools.size} tool calls", fontWeight = FontWeight.SemiBold); message.tools.forEach { Text("${if (it.state == "success") "✓" else "•"} ${it.name}: ${it.description.orEmpty()}", style = MaterialTheme.typography.bodySmall) } } }
-            message.subAgents.forEach { SubAgent(it) }
-            message.approvals.filter { it.decision == "pending" }.forEach { approval -> Card { Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Approval required", fontWeight = FontWeight.Bold); Text(approval.path); Text(approval.diff, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ vm.approve(approval.id, true) }) { Text("Approve") }; OutlinedButton({ vm.approve(approval.id, false) }) { Text("Reject") } } } } }
-            message.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
+                if (conversation == null) item { EmptyConversation() }
+                else items(messages, key = { it.id }) { Message(it, vm, display) }
+            }
+            Composer(conversation?.busy == true, vm)
+        }
+        if (!nearBottom && messages.isNotEmpty()) FilledTonalButton({ scope.launch { list.animateScrollToItem(messages.lastIndex) } }, Modifier.align(Alignment.BottomCenter).padding(bottom = 92.dp)) { Icon(Icons.Default.ArrowDownward, null); Spacer(Modifier.width(6.dp)); Text("Latest answer") }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable fun FullScreenFileViewer(
+    file: VaultFileResponse,
+    onClose: () -> Unit,
+    vm: ChatViewModel? = null,
+    canGoBack: Boolean = false,
+    onBack: (() -> Unit)? = null,
+    onDismissAll: (() -> Unit)? = null
+) {
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = true)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(file.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(file.path, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        },
+                        navigationIcon = {
+                            if (canGoBack && onBack != null) {
+                                IconButton(onClick = onBack) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to previous note")
+                                }
+                            } else {
+                                IconButton(onClick = onClose) {
+                                    Icon(Icons.Default.Close, contentDescription = "Close file")
+                                }
+                            }
+                        },
+                        actions = {
+                            if (canGoBack && onDismissAll != null) {
+                                IconButton(onClick = onDismissAll) {
+                                    Icon(Icons.Default.Close, contentDescription = "Close all")
+                                }
+                            }
+                        }
+                    )
+                }
+            ) { padding ->
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    item {
+                        MarkdownText(file.content, vm, onOpenFile = { path -> vm?.openFile(path) })
+                    }
+                }
+            }
         }
     }
 }
 
-@Composable private fun MarkdownText(markdown: String) {
-    var fenced = false
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        markdown.lines().forEach { raw ->
-            if (raw.trimStart().startsWith("```")) { fenced = !fenced; return@forEach }
-            val line = raw.trimEnd()
-            val header = line.takeWhile { it == '#' }.length.takeIf { it in 1..4 && line.getOrNull(it) == ' ' }
+private fun Int?.orEmptyIndex() = this ?: -1
+
+@Composable private fun EmptyConversation() {
+    Column(Modifier.fillMaxWidth().padding(top = 72.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+        Text("Start with your vault", style = MaterialTheme.typography.headlineSmall)
+        Text("Ask, attach a note, or delegate research.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable private fun Message(message: DisplayMessage, vm: ChatViewModel, display: DisplayPreferences) {
+    val user = message.role == "user"
+    var previewImageUrl by remember { mutableStateOf<String?>(null) }
+
+    Box(Modifier.fillMaxWidth(), contentAlignment = if (user) Alignment.CenterEnd else Alignment.CenterStart) {
+        Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent, shape = MaterialTheme.shapes.large, modifier = if (user) Modifier.fillMaxWidth(.88f) else Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(if (user) 14.dp else 2.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (user) "You" else "Agent",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (user) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
+                    )
+                    if (message.streaming) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = if (message.text.isBlank()) "Thinking..." else "Generating...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                
+                val imageRefs = remember(message.context) {
+                    message.context.filter { ref ->
+                        ref.mime?.startsWith("image/") == true ||
+                        listOf(".png", ".jpg", ".jpeg", ".webp", ".gif").any { ref.path.endsWith(it, ignoreCase = true) }
+                    }
+                }
+                if (imageRefs.isNotEmpty()) {
+                    ImageAttachmentStrip(imageRefs, vm) { previewImageUrl = it }
+                }
+
+                if (message.text.isNotBlank()) {
+                    MarkdownText(message.text, vm)
+                } else if (!user && message.streaming && message.tools.isEmpty()) {
+                    Text(
+                        text = "Thinking...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+
+                val cited = remember(message.text, message.context) { extractVaultReferences(message.text, message.context) }
+                if (cited.isNotEmpty()) ReferenceStrip(cited, vm)
+                if (message.tools.isNotEmpty() && display.toolDisplay != "hidden") ToolActivity(message.tools, display.toolDisplay)
+                message.subAgents.forEach { SubAgent(it, display) { guidance -> vm.steer(guidance, false, null) } }
+                message.approvals.filter { it.decision == "pending" }.forEach { approval -> Approval(approval, vm) }
+                message.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+
+    previewImageUrl?.let { url ->
+        ImagePreviewDialog(url, vm.deviceToken) { previewImageUrl = null }
+    }
+}
+
+@Composable private fun ImageAttachmentStrip(refs: List<ContextReference>, vm: ChatViewModel, onExpand: (String) -> Unit) {
+    val context = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        refs.forEach { ref ->
+            val url = vm.attachmentUrl(ref.path)
+            val request = remember(url, vm.deviceToken) {
+                ImageRequest.Builder(context)
+                    .data(url)
+                    .apply { if (vm.deviceToken.isNotBlank()) addHeader("x-device-token", vm.deviceToken) }
+                    .crossfade(true)
+                    .build()
+            }
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier.fillMaxWidth().clickable { onExpand(url) }
+            ) {
+                Column {
+                    AsyncImage(
+                        model = request,
+                        contentDescription = ref.name ?: "Image attachment",
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp, max = 280.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    ref.name?.takeIf { it.isNotBlank() }?.let { name ->
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun ImagePreviewDialog(url: String, token: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = Color.Black.copy(alpha = 0.92f)) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                val request = remember(url, token) {
+                    ImageRequest.Builder(context)
+                        .data(url)
+                        .apply { if (token.isNotBlank()) addHeader("x-device-token", token) }
+                        .crossfade(true)
+                        .build()
+                }
+                AsyncImage(
+                    model = request,
+                    contentDescription = "Full image preview",
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    contentScale = ContentScale.Fit
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun ReferenceStrip(paths: List<String>, vm: ChatViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Vault references", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        paths.forEach { path -> TextButton({ vm.openFile(path) }, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) { Icon(Icons.Default.Description, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(path, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+    }
+}
+
+@Composable private fun ToolActivity(tools: List<ToolCard>, mode: String) {
+    var expanded by remember { mutableStateOf(false) }
+    val running = tools.count { it.state == "running" }; val failed = tools.count { it.state == "error" }
+    Surface(onClick = { expanded = !expanded }, color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f), shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(if (running > 0) Icons.Default.Sync else if (failed > 0) Icons.Default.Warning else Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = if (failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); Text(if (running > 0) "$running active · ${tools.size} tools" else "${tools.size} tools used", Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) }
+            if (expanded) tools.forEach { tool -> ToolRow(tool, mode == "full") }
+        }
+    }
+}
+
+@Composable private fun ToolRow(tool: ToolCard, raw: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { Text(if (tool.state == "success") "✓" else if (tool.state == "error") "!" else "•", color = if (tool.state == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); Column { Text(tool.name, style = MaterialTheme.typography.labelLarge); tool.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) } } }
+        if (raw) { tool.input?.let { RawBlock("Input", it.toString()) }; tool.output?.let { RawBlock("Output", it.toString()) }; if (tool.updates.isNotEmpty()) RawBlock("Progress", tool.updates.joinToString("\n")) }
+    }
+}
+
+@Composable private fun SubAgent(agent: SubAgentCard, display: DisplayPreferences, steer: (String) -> Unit) {
+    var expanded by remember(agent.id) { mutableStateOf(display.autoExpandSubAgents) }
+    val complete = agent.state == "completed"; val elapsed = formatElapsed((agent.endedAt ?: System.currentTimeMillis()) - agent.startedAt)
+    Surface(onClick = { expanded = !expanded }, color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .72f), shape = MaterialTheme.shapes.large) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(if (complete) Icons.Default.CheckCircle else if (agent.state == "failed") Icons.Default.Error else Icons.Default.AccountTree, null, tint = if (agent.state == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) { Text(agent.name, fontWeight = FontWeight.SemiBold); Text("${agent.state.replaceFirstChar { it.uppercase() }} · $elapsed${agent.toolCalls?.let { " · $it tools" }.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) }
+            if (!expanded) agent.result?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall) } ?: agent.detail?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall) }
+            if (expanded) {
+                agent.result?.let { Section("Result") { Text(it, lineHeight = 21.sp) } }
+                agent.error?.let { Section("Error") { Text(it, color = MaterialTheme.colorScheme.error) } }
+                agent.task?.let { Disclosure("Task") { Text(it, style = MaterialTheme.typography.bodySmall) } }
+                val reasoning = agent.timeline.filter { it.kind == "thinking" }
+                if (reasoning.isNotEmpty()) Disclosure("Reasoning · ${reasoning.size}", display.autoExpandReasoning) { Timeline(reasoning, display.toolDisplay == "full") }
+                val tools = agent.timeline.filter { it.kind == "tool" }
+                if (tools.isNotEmpty() && display.toolDisplay != "hidden") Disclosure("Tools used · ${tools.size}") { Timeline(tools, display.toolDisplay == "full") }
+                val activity = agent.timeline.filter { it.kind != "thinking" && it.kind != "tool" }
+                if (activity.isNotEmpty()) Disclosure("Activity · ${activity.size}") { Timeline(activity, display.toolDisplay == "full") }
+                if (agent.state == "running") TextButton({ steer("Please steer sub-agent \"${agent.name}\" (${agent.id}) with this guidance: ") }) { Text("Steer via parent") }
+            }
+        }
+    }
+}
+
+@Composable private fun Section(title: String, body: @Composable () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary); body() } }
+@Composable private fun Disclosure(title: String, initiallyOpen: Boolean = false, body: @Composable () -> Unit) { var open by remember { mutableStateOf(initiallyOpen) }; Column { TextButton({ open = !open }, contentPadding = PaddingValues(0.dp)) { Text(title, Modifier.weight(1f)); Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) }; if (open) body() } }
+@Composable private fun Timeline(items: List<SubAgentActivity>, details: Boolean) { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) { items.forEach { item -> Column { Text(item.title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium); if (details) item.detail?.let { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } }
+@Composable private fun RawBlock(title: String, value: String) { Column { Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, maxLines = 12, overflow = TextOverflow.Ellipsis) } }
+private fun formatElapsed(milliseconds: Long): String { val seconds = (milliseconds.coerceAtLeast(0) / 1000); return if (seconds < 60) "${seconds}s" else "${seconds / 60}m ${seconds % 60}s" }
+
+@Composable private fun OfflineBanner(onRetry: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.75f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.CloudOff,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Text(
+                    text = "Offline - Browsing cached snapshot",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            TextButton(
+                onClick = onRetry,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+            ) {
+                Text("Retry", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable private fun Approval(approval: ApprovalCard, vm: ChatViewModel) {
+    val isExternal = approval.kind.equals("external", ignoreCase = true) ||
+            approval.kind.equals("external_access", ignoreCase = true) ||
+            approval.kind.equals("network", ignoreCase = true)
+    var showFullDiff by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isExternal) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+            else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (isExternal) MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+            else MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = if (isExternal) Icons.Default.Security else Icons.Default.Gavel,
+                    contentDescription = null,
+                    tint = if (isExternal) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = if (isExternal) "External Access Approval" else "Approval Required",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isExternal) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            if (isExternal) {
+                Surface(
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = "Agent requested permission to access network or resources outside the vault.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
+            approval.reason?.takeIf { it.isNotBlank() }?.let { reason ->
+                Text(
+                    text = "Reason: $reason",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (approval.path.isNotBlank()) {
+                Text(
+                    text = approval.path,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (approval.paths.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Target paths:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    approval.paths.forEach { p ->
+                        Text(p, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
+            if (approval.diff.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF181A1B),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val diffLines = remember(approval.diff) { approval.diff.lines() }
+                    val displayLines = if (!showFullDiff && diffLines.size > 12) diffLines.take(12) else diffLines
+
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        displayLines.forEach { line ->
+                            val (lineColor, lineBg) = when {
+                                line.startsWith("+") -> Pair(Color(0xFF8BE1C0), Color(0x1F8BE1C0))
+                                line.startsWith("-") -> Pair(Color(0xFFFF6B6B), Color(0x1FFF6B6B))
+                                line.startsWith("@@") -> Pair(Color(0xFF61AFEF), Color.Transparent)
+                                else -> Pair(Color(0xFFD4D4D4), Color.Transparent)
+                            }
+                            Text(
+                                text = line,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = lineColor,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(lineBg)
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+
+                        if (diffLines.size > 12) {
+                            TextButton(
+                                onClick = { showFullDiff = !showFullDiff },
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            ) {
+                                Text(if (showFullDiff) "Collapse diff" else "Show all ${diffLines.size} lines")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = { vm.approve(approval.id, true) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Approve")
+                }
+                OutlinedButton(
+                    onClick = { vm.approve(approval.id, false) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Reject")
+                }
+            }
+        }
+    }
+}
+
+fun resolveAndOpenLink(link: String, context: Context, onOpenFile: ((String) -> Unit)?) {
+    val clean = link.trim().removePrefix("<").removeSuffix(">")
+    when {
+        clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true) -> {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Could not open link", Toast.LENGTH_SHORT).show()
+            }
+        }
+        clean.startsWith("obsidian://", ignoreCase = true) -> {
+            val fileParam = Uri.parse(clean).getQueryParameter("file")
+            if (!fileParam.isNullOrBlank() && onOpenFile != null) {
+                onOpenFile(fileParam)
+            } else {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (_: Exception) {
+                    Toast.makeText(context, "Obsidian not available", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        clean.contains("XyourP-Main-Vault", ignoreCase = true) -> {
+            val vaultRelative = clean
+                .substringAfter("XyourP-Main-Vault/")
+                .substringAfter("XyourP-Main-Vault\\")
+                .replace('\\', '/')
+            if (onOpenFile != null) {
+                onOpenFile(vaultRelative)
+            }
+        }
+        clean.startsWith("file://", ignoreCase = true) -> {
+            val path = clean.removePrefix("file://").removePrefix("/")
+            if (path.contains("XyourP-Main-Vault", ignoreCase = true)) {
+                val vaultRelative = path
+                    .substringAfter("XyourP-Main-Vault/")
+                    .substringAfter("XyourP-Main-Vault\\")
+                    .replace('\\', '/')
+                onOpenFile?.invoke(vaultRelative)
+            } else {
+                onOpenFile?.invoke(path)
+            }
+        }
+        else -> {
+            val target = clean.removePrefix("[[").removeSuffix("]]").split("|")[0].split("#")[0].trim()
+            if (target.isNotBlank()) {
+                onOpenFile?.invoke(target)
+            }
+        }
+    }
+}
+
+fun buildAnnotatedMarkdown(
+    text: String,
+    primaryColor: Color,
+    codeBg: Color,
+    onLinkClick: ((String) -> Unit)? = null
+): AnnotatedString {
+    val builder = AnnotatedString.Builder()
+    val regex = Regex("""(\*\*([^*]+)\*\*|\*([^*]+)\*|~~([^~]+)~~|`([^`]+)`|\$([^$\n]+)\$|\[\[([^]|]+)(?:\|([^\]]+))?\]\]|\[([^]]+)\]\(([^)]+)\)|(https?://[^\s)\]>]+))""")
+    var lastIndex = 0
+    for (match in regex.findAll(text)) {
+        if (match.range.first > lastIndex) {
+            builder.append(text.substring(lastIndex, match.range.first))
+        }
+        val bold = match.groups[2]?.value
+        val italic = match.groups[3]?.value
+        val strike = match.groups[4]?.value
+        val code = match.groups[5]?.value
+        val math = match.groups[6]?.value
+        val wikiTarget = match.groups[7]?.value
+        val wikiLabel = match.groups[8]?.value
+        val linkText = match.groups[9]?.value
+        val linkUrl = match.groups[10]?.value
+        val bareUrl = match.groups[11]?.value
+
+        when {
+            bold != null -> {
+                builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                builder.append(bold)
+                builder.pop()
+            }
+            italic != null -> {
+                builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                builder.append(italic)
+                builder.pop()
+            }
+            strike != null -> {
+                builder.pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+                builder.append(strike)
+                builder.pop()
+            }
+            code != null -> {
+                builder.pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg))
+                builder.append(" $code ")
+                builder.pop()
+            }
+            math != null -> {
+                builder.pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontStyle = FontStyle.Italic, color = primaryColor))
+                builder.append(math)
+                builder.pop()
+            }
+            wikiTarget != null -> {
+                val label = wikiLabel ?: wikiTarget
+                if (onLinkClick != null) {
+                    val link = LinkAnnotation.Clickable(
+                        tag = wikiTarget,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(
+                                color = primaryColor,
+                                fontWeight = FontWeight.Medium,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        ),
+                        linkInteractionListener = { onLinkClick(wikiTarget) }
+                    )
+                    builder.pushLink(link)
+                    builder.append(label)
+                    builder.pop()
+                } else {
+                    builder.pushStyle(SpanStyle(color = primaryColor, fontWeight = FontWeight.Medium, textDecoration = TextDecoration.Underline))
+                    builder.append(label)
+                    builder.pop()
+                }
+            }
+            linkText != null && linkUrl != null -> {
+                if (onLinkClick != null) {
+                    val link = LinkAnnotation.Clickable(
+                        tag = linkUrl,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(
+                                color = primaryColor,
+                                fontWeight = FontWeight.Normal,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        ),
+                        linkInteractionListener = { onLinkClick(linkUrl) }
+                    )
+                    builder.pushLink(link)
+                    builder.append(linkText)
+                    builder.pop()
+                } else {
+                    builder.pushStyle(SpanStyle(color = primaryColor, textDecoration = TextDecoration.Underline))
+                    builder.append(linkText)
+                    builder.pop()
+                }
+            }
+            bareUrl != null -> {
+                if (onLinkClick != null) {
+                    val link = LinkAnnotation.Clickable(
+                        tag = bareUrl,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(
+                                color = primaryColor,
+                                textDecoration = TextDecoration.Underline
+                            )
+                        ),
+                        linkInteractionListener = { onLinkClick(bareUrl) }
+                    )
+                    builder.pushLink(link)
+                    builder.append(bareUrl)
+                    builder.pop()
+                } else {
+                    builder.pushStyle(SpanStyle(color = primaryColor, textDecoration = TextDecoration.Underline))
+                    builder.append(bareUrl)
+                    builder.pop()
+                }
+            }
+            else -> builder.append(match.value)
+        }
+        lastIndex = match.range.last + 1
+    }
+    if (lastIndex < text.length) {
+        builder.append(text.substring(lastIndex))
+    }
+    return builder.toAnnotatedString()
+}
+
+@Composable fun MarkdownInlineText(
+    text: String,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyMedium,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 22.sp,
+    fontWeight: FontWeight? = null,
+    fontSize: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+    textAlign: TextAlign? = null,
+    textDecoration: TextDecoration? = null,
+    onOpenFile: ((String) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val codeBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+    val annotated = remember(text, primaryColor, codeBg, onOpenFile) {
+        buildAnnotatedMarkdown(text, primaryColor, codeBg) { link ->
+            resolveAndOpenLink(link, context, onOpenFile)
+        }
+    }
+    var mergedStyle = style
+    if (fontWeight != null) mergedStyle = mergedStyle.copy(fontWeight = fontWeight)
+    if (fontSize != androidx.compose.ui.unit.TextUnit.Unspecified) mergedStyle = mergedStyle.copy(fontSize = fontSize)
+    if (textDecoration != null) mergedStyle = mergedStyle.copy(textDecoration = textDecoration)
+    Text(
+        text = annotated,
+        style = mergedStyle,
+        color = color,
+        lineHeight = lineHeight,
+        textAlign = textAlign,
+        modifier = modifier
+    )
+}
+
+@Composable fun MarkdownText(
+    markdown: String,
+    vm: ChatViewModel? = null,
+    onOpenFile: ((String) -> Unit)? = null
+) {
+    val effectiveOpenFile: ((String) -> Unit)? = onOpenFile ?: { path: String -> vm?.openFile(path) }
+    val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        blocks.forEach { block ->
+            when (block) {
+                is MarkdownBlock.Header -> {
+                    MarkdownInlineText(
+                        text = block.text,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = (22 - block.level * 2).coerceAtLeast(14).sp,
+                        lineHeight = (26 - block.level * 2).coerceAtLeast(18).sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        onOpenFile = effectiveOpenFile,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                    )
+                }
+                is MarkdownBlock.Bullet -> {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Text(text = "• ", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        MarkdownInlineText(
+                            text = block.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            lineHeight = 22.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            onOpenFile = effectiveOpenFile
+                        )
+                    }
+                }
+                is MarkdownBlock.Ordered -> {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Text(text = "${block.index}. ", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                        MarkdownInlineText(
+                            text = block.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            lineHeight = 22.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            onOpenFile = effectiveOpenFile
+                        )
+                    }
+                }
+                is MarkdownBlock.Code -> {
+                    CodeBlockView(block)
+                }
+                is MarkdownBlock.Table -> {
+                    TableView(block, effectiveOpenFile)
+                }
+                is MarkdownBlock.Image -> {
+                    MarkdownImageView(block, vm)
+                }
+                is MarkdownBlock.Paragraph -> {
+                    MarkdownInlineText(
+                        text = block.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        lineHeight = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        onOpenFile = effectiveOpenFile
+                    )
+                }
+                is MarkdownBlock.Callout -> {
+                    CalloutView(block, effectiveOpenFile)
+                }
+                is MarkdownBlock.Mermaid -> {
+                    MermaidView(block)
+                }
+                is MarkdownBlock.TaskItem -> {
+                    TaskItemView(block, effectiveOpenFile)
+                }
+                is MarkdownBlock.MathBlock -> {
+                    MathBlockView(block)
+                }
+                is MarkdownBlock.ChoiceCard -> {
+                    ChoiceCardView(block, vm)
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun TableView(
+    table: MarkdownBlock.Table,
+    onOpenFile: ((String) -> Unit)? = null
+) {
+    val scrollState = rememberScrollState()
+    val columnCount = maxOf(table.headers.size, table.rows.maxOfOrNull { it.size } ?: 0)
+    if (columnCount == 0) return
+
+    val columnWidths = remember(table) {
+        (0 until columnCount).map { col ->
+            val headerLen = table.headers.getOrNull(col)?.length ?: 0
+            val maxRowLen = table.rows.maxOfOrNull { it.getOrNull(col)?.length ?: 0 } ?: 0
+            val maxLen = maxOf(headerLen, maxRowLen)
+            (maxLen * 9 + 28).coerceIn(80, 260).dp
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState)) {
+            Row(
+                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)).padding(vertical = 8.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (col in 0 until columnCount) {
+                    val headerText = table.headers.getOrNull(col).orEmpty()
+                    val align = table.alignments.getOrNull(col) ?: TableAlignment.LEFT
+                    val textAlign = when (align) {
+                        TableAlignment.CENTER -> TextAlign.Center
+                        TableAlignment.RIGHT -> TextAlign.End
+                        TableAlignment.LEFT -> TextAlign.Start
+                    }
+                    MarkdownInlineText(
+                        text = headerText,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = textAlign,
+                        onOpenFile = onOpenFile,
+                        modifier = Modifier.width(columnWidths[col]).padding(horizontal = 8.dp)
+                    )
+                }
+            }
+
+            HorizontalDivider(thickness = 1.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+
+            table.rows.forEachIndexed { rowIndex, row ->
+                val rowBg = if (rowIndex % 2 == 1) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f) else Color.Transparent
+                Row(
+                    modifier = Modifier.background(rowBg).padding(vertical = 7.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (col in 0 until columnCount) {
+                        val cellText = row.getOrNull(col).orEmpty()
+                        val align = table.alignments.getOrNull(col) ?: TableAlignment.LEFT
+                        val textAlign = when (align) {
+                            TableAlignment.CENTER -> TextAlign.Center
+                            TableAlignment.RIGHT -> TextAlign.End
+                            TableAlignment.LEFT -> TextAlign.Start
+                        }
+                        MarkdownInlineText(
+                            text = cellText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = textAlign,
+                            onOpenFile = onOpenFile,
+                            modifier = Modifier.width(columnWidths[col]).padding(horizontal = 8.dp)
+                        )
+                    }
+                }
+                if (rowIndex < table.rows.lastIndex) {
+                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun CodeBlockView(block: MarkdownBlock.Code) {
+    val context = LocalContext.current
+    val scrollState = rememberScrollState()
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = block.language?.uppercase() ?: "CODE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                IconButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("code", block.code))
+                        Toast.makeText(context, "Code copied to clipboard", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Copy code",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Text(
-                text = when { header != null -> line.drop(header + 1); line.startsWith("- ") -> "• ${line.drop(2)}"; else -> line },
-                fontFamily = if (fenced || line.startsWith("    ")) FontFamily.Monospace else FontFamily.Default,
-                fontWeight = if (header != null) FontWeight.Bold else FontWeight.Normal,
-                fontSize = if (header != null) (22 - header * 2).sp else MaterialTheme.typography.bodyMedium.fontSize,
-                color = if (fenced) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                text = block.code,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.horizontalScroll(scrollState)
             )
         }
     }
 }
 
-@Composable private fun SubAgent(agent: SubAgentCard) {
-    var expanded by remember { mutableStateOf(false) }
-    Card(onClick = { expanded = !expanded }) { Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text("${agent.name} · ${agent.state}", fontWeight = FontWeight.SemiBold)
-        agent.task?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        if (expanded) { HorizontalDivider(); agent.detail?.let { Text(it) }; agent.timeline.forEach { Text("${it.kind}: ${it.title}${it.detail?.let { d -> " · $d" }.orEmpty()}", style = MaterialTheme.typography.bodySmall) }; agent.result?.let { Text(it) }; agent.error?.let { Text(it, color = MaterialTheme.colorScheme.error) } }
-    } }
+@Composable private fun MarkdownImageView(block: MarkdownBlock.Image, vm: ChatViewModel?) {
+    val context = LocalContext.current
+    var fullPreview by remember { mutableStateOf(false) }
+    val resolvedUrl = remember(block.url, vm) {
+        val u = block.url
+        when {
+            u.startsWith("http://") || u.startsWith("https://") -> u
+            u.startsWith("/api/") && vm != null -> vm.attachmentUrl(u.removePrefix("/api/attachment?path="))
+            u.contains("XyourP-Main-Vault", ignoreCase = true) && vm != null -> {
+                val rel = u.substringAfter("XyourP-Main-Vault/").replace('\\', '/')
+                vm.attachmentUrl(rel)
+            }
+            vm != null && !u.startsWith("http") -> vm.attachmentUrl(u)
+            else -> u
+        }
+    }
+    val request = remember(resolvedUrl, vm?.deviceToken) {
+        ImageRequest.Builder(context)
+            .data(resolvedUrl)
+            .apply { vm?.deviceToken?.takeIf { it.isNotBlank() }?.let { token -> addHeader("x-device-token", token) } }
+            .crossfade(true)
+            .build()
+    }
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { fullPreview = true }
+    ) {
+        AsyncImage(
+            model = request,
+            contentDescription = block.alt.ifBlank { "Markdown Image" },
+            modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+            contentScale = ContentScale.Fit
+        )
+    }
+
+    if (fullPreview) {
+        ImagePreviewDialog(resolvedUrl, vm?.deviceToken.orEmpty()) { fullPreview = false }
+    }
 }
 
-@Composable private fun Composer(busy: Boolean, send: (String, String?) -> Unit, steer: (String, Boolean, String?) -> Unit, stop: () -> Unit) {
-    var text by remember { mutableStateOf("") }
-    var contextPath by remember { mutableStateOf("") }; var showContext by remember { mutableStateOf(false) }
-    Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) { Column(Modifier.fillMaxWidth().padding(10.dp)) {
-        if (showContext) OutlinedTextField(contextPath, { contextPath = it }, Modifier.fillMaxWidth(), label = { Text("Vault note or file path") }, singleLine = true)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            IconButton({ showContext = !showContext }) { Icon(Icons.Default.AttachFile, "Attach vault file") }
-            OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text(if (busy) "Steer the active turn" else "Message OAC") }, maxLines = 5)
-            if (busy) { IconButton(stop) { Icon(Icons.Default.Stop, "Stop") }; IconButton({ val value = text.trim(); if (value.isNotEmpty()) { steer(value, true, contextPath.ifBlank { null }); text = "" } }) { Icon(Icons.Default.Bolt, "Steer immediately") } }
-            IconButton({ val value = text.trim(); if (value.isNotEmpty()) { if (busy) steer(value, false, contextPath.ifBlank { null }) else send(value, contextPath.ifBlank { null }); text = "" } }) { Icon(Icons.AutoMirrored.Filled.Send, if (busy) "Steer after current tool" else "Send") }
+@Composable private fun CalloutView(
+    block: MarkdownBlock.Callout,
+    onOpenFile: ((String) -> Unit)? = null
+) {
+    val (calloutColor, icon, defaultTitle) = when (block.type) {
+        "NOTE", "INFO" -> Triple(Color(0xFF58A6FF), Icons.Default.Info, "Note")
+        "TIP", "HINT" -> Triple(Color(0xFF8BE1C0), Icons.Default.Lightbulb, "Tip")
+        "IMPORTANT" -> Triple(Color(0xFFA371F7), Icons.Default.PriorityHigh, "Important")
+        "WARNING" -> Triple(Color(0xFFD29922), Icons.Default.Warning, "Warning")
+        "CAUTION", "DANGER", "ERROR" -> Triple(Color(0xFFF85149), Icons.Default.Error, "Caution")
+        "ABSTRACT", "SUMMARY", "TLDR" -> Triple(Color(0xFF39C5CF), Icons.Default.MenuBook, "Summary")
+        "SUCCESS", "CHECK", "DONE" -> Triple(Color(0xFF3FB950), Icons.Default.CheckCircle, "Success")
+        "QUESTION", "HELP", "FAQ" -> Triple(Color(0xFFE3B341), Icons.Default.HelpOutline, "Question")
+        else -> Triple(MaterialTheme.colorScheme.primary, Icons.Default.Info, block.type.lowercase().replaceFirstChar { it.uppercase() })
+    }
+    val title = block.title.ifBlank { defaultTitle }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = calloutColor.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, calloutColor.copy(alpha = 0.35f))
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(calloutColor)
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = calloutColor
+                    )
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = calloutColor
+                    )
+                }
+                if (block.content.isNotBlank()) {
+                    MarkdownInlineText(
+                        text = block.content,
+                        style = MaterialTheme.typography.bodyMedium,
+                        lineHeight = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        onOpenFile = onOpenFile
+                    )
+                }
+            }
         }
-    } }
+    }
+}
+
+@Composable private fun TaskItemView(
+    block: MarkdownBlock.TaskItem,
+    onOpenFile: ((String) -> Unit)? = null
+) {
+    var isChecked by remember(block.text, block.checked) { mutableStateOf(block.checked) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = isChecked,
+            onCheckedChange = { isChecked = it },
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.colorScheme.primary,
+                uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
+            modifier = Modifier.size(32.dp).padding(end = 4.dp)
+        )
+        MarkdownInlineText(
+            text = block.text,
+            style = MaterialTheme.typography.bodyMedium,
+            lineHeight = 22.sp,
+            color = if (isChecked) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+            textDecoration = if (isChecked) TextDecoration.LineThrough else null,
+            onOpenFile = onOpenFile,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable private fun MermaidView(block: MarkdownBlock.Mermaid) {
+    var showCode by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scrollState = rememberScrollState()
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AccountTree,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "MERMAID DIAGRAM",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    FilterChip(
+                        selected = !showCode,
+                        onClick = { showCode = false },
+                        label = { Text("Diagram", style = MaterialTheme.typography.labelSmall) }
+                    )
+                    FilterChip(
+                        selected = showCode,
+                        onClick = { showCode = true },
+                        label = { Text("Code", style = MaterialTheme.typography.labelSmall) }
+                    )
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            clipboard?.setPrimaryClip(ClipData.newPlainText("mermaid", block.code))
+                            Toast.makeText(context, "Mermaid code copied", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = "Copy code",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (showCode) {
+                Text(
+                    text = block.code,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.horizontalScroll(scrollState)
+                )
+            } else {
+                val escapedCode = remember(block.code) {
+                    block.code
+                        .replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                }
+                val html = remember(escapedCode) {
+                    """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                      <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+                      <style>
+                        body {
+                          margin: 0;
+                          padding: 12px;
+                          background-color: #1e2224;
+                          color: #e0e0e0;
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          min-height: 80px;
+                          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                        }
+                        .mermaid {
+                          width: 100%;
+                          text-align: center;
+                        }
+                        .mermaid svg {
+                          max-width: 100%;
+                          height: auto;
+                        }
+                      </style>
+                      <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+                      <script>
+                        mermaid.initialize({
+                          startOnLoad: true,
+                          theme: 'dark',
+                          themeVariables: {
+                            darkMode: true,
+                            background: '#1e2224',
+                            primaryColor: '#8BE1C0',
+                            primaryTextColor: '#1a1d1e',
+                            primaryBorderColor: '#8BE1C0',
+                            lineColor: '#8BE1C0',
+                            secondaryColor: '#2d333b',
+                            tertiaryColor: '#22272e'
+                          }
+                        });
+                      </script>
+                    </head>
+                    <body>
+                      <div class="mermaid">
+                        $escapedCode
+                      </div>
+                    </body>
+                    </html>
+                    """.trimIndent()
+                }
+
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp, max = 360.dp)
+                        .clip(RoundedCornerShape(6.dp)),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.loadWithOverviewMode = true
+                            settings.useWideViewPort = true
+                            setBackgroundColor(android.graphics.Color.parseColor("#1e2224"))
+                            loadDataWithBaseURL("https://cdn.jsdelivr.net", html, "text/html", "UTF-8", null)
+                        }
+                    },
+                    update = { webView ->
+                        webView.loadDataWithBaseURL("https://cdn.jsdelivr.net", html, "text/html", "UTF-8", null)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable private fun MathBlockView(block: MarkdownBlock.MathBlock) {
+    val context = LocalContext.current
+    var showRaw by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "KATEX MATH",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    FilterChip(
+                        selected = !showRaw,
+                        onClick = { showRaw = false },
+                        label = { Text("Rendered", style = MaterialTheme.typography.labelSmall) }
+                    )
+                    FilterChip(
+                        selected = showRaw,
+                        onClick = { showRaw = true },
+                        label = { Text("LaTeX", style = MaterialTheme.typography.labelSmall) }
+                    )
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            clipboard?.setPrimaryClip(ClipData.newPlainText("latex", block.math))
+                            Toast.makeText(context, "LaTeX copied", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = "Copy LaTeX",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (showRaw) {
+                Text(
+                    text = block.math,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                )
+            } else {
+                val jsonEscaped = remember(block.math) {
+                    "\"" + block.math.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+                }
+                val html = remember(jsonEscaped) {
+                    """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+                      <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+                      <style>
+                        body {
+                          margin: 0;
+                          padding: 10px;
+                          background-color: #1e2224;
+                          color: #8BE1C0;
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          font-size: 16px;
+                        }
+                        .katex-display { margin: 0; }
+                      </style>
+                    </head>
+                    <body>
+                      <div id="math"></div>
+                      <script>
+                        try {
+                          katex.render($jsonEscaped, document.getElementById('math'), { displayMode: true, throwOnError: false });
+                        } catch(e) {
+                          document.getElementById('math').innerText = $jsonEscaped;
+                        }
+                      </script>
+                    </body>
+                    </html>
+                    """.trimIndent()
+                }
+
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 60.dp, max = 200.dp)
+                        .clip(RoundedCornerShape(6.dp)),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            setBackgroundColor(android.graphics.Color.parseColor("#1e2224"))
+                            loadDataWithBaseURL("https://cdn.jsdelivr.net", html, "text/html", "UTF-8", null)
+                        }
+                    },
+                    update = { webView ->
+                        webView.loadDataWithBaseURL("https://cdn.jsdelivr.net", html, "text/html", "UTF-8", null)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable private fun ChoiceCardView(
+    block: MarkdownBlock.ChoiceCard,
+    vm: ChatViewModel?
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.HelpOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = block.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            block.prompt?.takeIf { it.isNotBlank() }?.let { prompt ->
+                Text(
+                    text = prompt,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                block.options.forEach { option ->
+                    Surface(
+                        onClick = { vm?.setComposerText(option.value) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = option.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            IconButton(
+                                onClick = { vm?.send(option.value, null) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Send directly",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun parseTableRow(line: String): List<String> {
+    var s = line.trim()
+    if (s.startsWith("|")) s = s.drop(1)
+    if (s.endsWith("|")) s = s.dropLast(1)
+    return s.split('|').map { it.trim() }
+}
+
+private fun isTableDelimiterRow(line: String?): Boolean {
+    if (line == null) return false
+    val s = line.trim()
+    if (!s.contains("-") || !s.contains("|")) return false
+    val cells = parseTableRow(s)
+    if (cells.isEmpty()) return false
+    return cells.all { cell -> cell.matches(Regex("^:?-+:?$")) }
+}
+
+private fun parseMarkdownBlocks(markdown: String): List<MarkdownBlock> {
+    val blocks = mutableListOf<MarkdownBlock>()
+    val lines = markdown.lines()
+    var i = 0
+    while (i < lines.size) {
+        val raw = lines[i]
+        val trimmed = raw.trim()
+
+        if (trimmed.startsWith("```")) {
+            val lang = trimmed.removePrefix("```").trim().takeIf { it.isNotBlank() }
+            val codeLines = mutableListOf<String>()
+            i++
+            while (i < lines.size && !lines[i].trim().startsWith("```")) {
+                codeLines.add(lines[i])
+                i++
+            }
+            if (i < lines.size) i++
+            val fullCode = codeLines.joinToString("\n")
+            if (lang.equals("mermaid", ignoreCase = true)) {
+                blocks.add(MarkdownBlock.Mermaid(fullCode))
+            } else {
+                blocks.add(MarkdownBlock.Code(lang, fullCode))
+            }
+            continue
+        }
+
+        if (trimmed.startsWith("$$")) {
+            if (trimmed.endsWith("$$") && trimmed.length > 4) {
+                val math = trimmed.removePrefix("$$").removeSuffix("$$").trim()
+                blocks.add(MarkdownBlock.MathBlock(math))
+                i++
+                continue
+            } else {
+                val mathLines = mutableListOf<String>()
+                val firstLine = trimmed.removePrefix("$$").trim()
+                if (firstLine.isNotBlank()) mathLines.add(firstLine)
+                i++
+                while (i < lines.size && !lines[i].trim().endsWith("$$")) {
+                    mathLines.add(lines[i])
+                    i++
+                }
+                if (i < lines.size) {
+                    val last = lines[i].trim().removeSuffix("$$").trim()
+                    if (last.isNotBlank()) mathLines.add(last)
+                    i++
+                }
+                blocks.add(MarkdownBlock.MathBlock(mathLines.joinToString("\n")))
+                continue
+            }
+        }
+
+        if (trimmed.startsWith("<details", ignoreCase = true) && trimmed.contains("oac-choice", ignoreCase = true)) {
+            val cardLines = mutableListOf<String>()
+            while (i < lines.size) {
+                cardLines.add(lines[i])
+                if (lines[i].contains("</details>", ignoreCase = true)) {
+                    i++
+                    break
+                }
+                i++
+            }
+            val fullHtml = cardLines.joinToString("\n")
+            val titleMatch = Regex("""<summary>(.*?)</summary>""", RegexOption.DOT_MATCHES_ALL).find(fullHtml)
+            val titleRaw = titleMatch?.groupValues?.get(1)?.replace(Regex("<[^>]*>"), "")?.trim() ?: "Question"
+            val promptMatch = Regex("""<p>(.*?)</p>""", RegexOption.DOT_MATCHES_ALL).find(fullHtml)
+            val promptRaw = promptMatch?.groupValues?.get(1)?.replace(Regex("<[^>]*>"), "")?.trim()
+            val options = mutableListOf<ChoiceOption>()
+            val btnRegex = Regex("""<button[^>]*data-choice="([^"]*)"[^>]*>(.*?)</button>""", RegexOption.DOT_MATCHES_ALL)
+            for (btn in btnRegex.findAll(fullHtml)) {
+                val valStr = btn.groupValues[1].trim()
+                val labelStr = btn.groupValues[2].replace(Regex("<[^>]*>"), "").trim()
+                options.add(ChoiceOption(valStr, labelStr.ifBlank { valStr }))
+            }
+            if (options.isEmpty()) {
+                val fallbackBtnRegex = Regex("""<button[^>]*>(.*?)</button>""", RegexOption.DOT_MATCHES_ALL)
+                for (btn in fallbackBtnRegex.findAll(fullHtml)) {
+                    val labelStr = btn.groupValues[1].replace(Regex("<[^>]*>"), "").trim()
+                    if (labelStr.isNotBlank()) {
+                        options.add(ChoiceOption(labelStr, labelStr))
+                    }
+                }
+            }
+            blocks.add(MarkdownBlock.ChoiceCard(titleRaw, promptRaw, options))
+            continue
+        }
+
+        if (trimmed.isBlank()) {
+            i++
+            continue
+        }
+
+        val calloutMatch = Regex("""^>\s*\[!([a-zA-Z_-]+)\]\s*(.*)$""").find(trimmed)
+        if (calloutMatch != null) {
+            val type = calloutMatch.groupValues[1].uppercase()
+            val titleText = calloutMatch.groupValues[2].trim()
+            val calloutLines = mutableListOf<String>()
+            i++
+            while (i < lines.size) {
+                val next = lines[i].trim()
+                if (next.startsWith(">")) {
+                    calloutLines.add(next.removePrefix(">").trim())
+                    i++
+                } else if (next.isBlank()) {
+                    i++
+                    break
+                } else {
+                    calloutLines.add(next)
+                    i++
+                }
+            }
+            blocks.add(MarkdownBlock.Callout(type, titleText, calloutLines.joinToString("\n")))
+            continue
+        }
+
+        val taskMatch = Regex("""^[-*]\s+\[([ xX])\]\s+(.*)$""").find(trimmed)
+        if (taskMatch != null) {
+            val checked = taskMatch.groupValues[1].equals("x", ignoreCase = true)
+            val taskText = taskMatch.groupValues[2].trim()
+            blocks.add(MarkdownBlock.TaskItem(checked, taskText))
+            i++
+            continue
+        }
+
+        if (raw.contains("|") && i + 1 < lines.size && isTableDelimiterRow(lines[i + 1])) {
+            val headerCells = parseTableRow(raw)
+            val alignCells = parseTableRow(lines[i + 1])
+            if (headerCells.isNotEmpty() && alignCells.isNotEmpty()) {
+                val alignments = alignCells.map { cell ->
+                    val left = cell.startsWith(":")
+                    val right = cell.endsWith(":")
+                    when {
+                        left && right -> TableAlignment.CENTER
+                        right -> TableAlignment.RIGHT
+                        else -> TableAlignment.LEFT
+                    }
+                }
+                i += 2
+                val tableRows = mutableListOf<List<String>>()
+                while (i < lines.size) {
+                    val candidate = lines[i].trim()
+                    if (candidate.isBlank() || !candidate.contains("|") || candidate.startsWith("```") || candidate.startsWith("#")) {
+                        break
+                    }
+                    tableRows.add(parseTableRow(lines[i]))
+                    i++
+                }
+                blocks.add(MarkdownBlock.Table(headerCells, alignments, tableRows))
+                continue
+            }
+        }
+
+        val imgMatch = Regex("^!\\[(.*?)\\]\\((.*?)\\)$").find(trimmed)
+        if (imgMatch != null) {
+            blocks.add(MarkdownBlock.Image(imgMatch.groupValues[1], imgMatch.groupValues[2]))
+            i++
+            continue
+        }
+
+        val hMatch = Regex("^(#{1,6})\\s+(.*)$").find(trimmed)
+        if (hMatch != null) {
+            val level = hMatch.groupValues[1].length
+            val text = hMatch.groupValues[2]
+            blocks.add(MarkdownBlock.Header(level, text))
+            i++
+            continue
+        }
+
+        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+            blocks.add(MarkdownBlock.Bullet(trimmed.drop(2).trim()))
+            i++
+            continue
+        }
+
+        val oMatch = Regex("^(\\d+)\\.\\s+(.*)$").find(trimmed)
+        if (oMatch != null) {
+            blocks.add(MarkdownBlock.Ordered(oMatch.groupValues[1], oMatch.groupValues[2]))
+            i++
+            continue
+        }
+
+        blocks.add(MarkdownBlock.Paragraph(trimmed))
+        i++
+    }
+    return blocks
+}
+
+private fun extractVaultReferences(text: String, context: List<ContextReference>): List<String> {
+    val isImage = { path: String -> listOf(".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp").any { path.endsWith(it, ignoreCase = true) } }
+    val wiki = Regex("\\[\\[([^]|#]+)").findAll(text).map { it.groupValues[1] }
+    val files = Regex("\\[[^]]+]\\(file:///C:/XyourP/XyourP-Main-Vault/([^)]+)\\)", RegexOption.IGNORE_CASE).findAll(text).map { java.net.URLDecoder.decode(it.groupValues[1], Charsets.UTF_8.name()).replace('\\', '/') }
+    return (wiki + files + context.asSequence().map { it.path }).filterNot { isImage(it) }.distinct().toList()
+}
+
+@Composable private fun Composer(busy: Boolean, vm: ChatViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val clipboard = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager }
+    val state by vm.state.collectAsStateWithLifecycle()
+
+    var text by remember { mutableStateOf("") }
+    var contextPath by remember { mutableStateOf("") }
+    var showContext by remember { mutableStateOf(false) }
+    var pendingImages by remember { mutableStateOf<List<PendingImage>>(emptyList()) }
+    var isUploading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.composerText) {
+        if (state.composerText.isNotBlank()) {
+            text = state.composerText
+            vm.clearComposerText()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (state.skills.isEmpty()) {
+            vm.refreshSkills()
+        }
+    }
+
+    fun pasteImageFromClipboard() {
+        val clip = clipboard?.primaryClip
+        if (clip == null || clip.itemCount == 0) {
+            Toast.makeText(context, "No image found in clipboard", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val newPending = mutableListOf<PendingImage>()
+            var errorMessage: String? = null
+
+            for (i in 0 until clip.itemCount) {
+                val item = clip.getItemAt(i) ?: continue
+                val uri = item.uri
+                val text = item.text?.toString()?.trim() ?: ""
+                val html = item.htmlText ?: ""
+
+                if (uri != null) {
+                    try {
+                        val mime = context.contentResolver.getType(uri) ?: "image/png"
+                        var bytes = try {
+                            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (bytes == null && uri.scheme == "file" && uri.path != null) {
+                            val f = java.io.File(uri.path!!)
+                            if (f.exists() && f.canRead()) {
+                                bytes = f.readBytes()
+                            }
+                        }
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val ext = if (mime.contains("jpeg") || mime.contains("jpg")) "jpg" else "png"
+                            val name = "clipboard-${System.currentTimeMillis()}-$i.$ext"
+                            newPending.add(PendingImage(name, mime, bytes, uri))
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = e.message ?: "Failed to read image"
+                    }
+                } else if (text.startsWith("data:image/", ignoreCase = true)) {
+                    try {
+                        val commaIdx = text.indexOf(',')
+                        if (commaIdx != -1) {
+                            val header = text.substring(0, commaIdx)
+                            val b64 = text.substring(commaIdx + 1)
+                            val mime = header.substringAfter("data:").substringBefore(";")
+                            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                            if (bytes.isNotEmpty()) {
+                                val ext = if (mime.contains("jpeg") || mime.contains("jpg")) "jpg" else "png"
+                                val name = "clipboard-${System.currentTimeMillis()}-$i.$ext"
+                                newPending.add(PendingImage(name, mime, bytes, null))
+                            }
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = e.message ?: "Failed to decode base64 image"
+                    }
+                } else if (html.contains("data:image/", ignoreCase = true)) {
+                    try {
+                        val match = Regex("""data:(image\/[a-zA-Z0-9\+\-\.]+);base64,([A-Za-z0-9+/=]+)""").find(html)
+                        if (match != null) {
+                            val mime = match.groupValues[1]
+                            val b64 = match.groupValues[2]
+                            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                            if (bytes.isNotEmpty()) {
+                                val ext = if (mime.contains("jpeg") || mime.contains("jpg")) "jpg" else "png"
+                                val name = "clipboard-${System.currentTimeMillis()}-$i.$ext"
+                                newPending.add(PendingImage(name, mime, bytes, null))
+                            }
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = e.message ?: "Failed to decode HTML image"
+                    }
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                if (newPending.isNotEmpty()) {
+                    pendingImages = pendingImages + newPending
+                    val label = if (newPending.size == 1) "Image pasted from clipboard" else "${newPending.size} images pasted"
+                    Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+                } else {
+                    val msg = if (errorMessage != null) "Clipboard image error: $errorMessage" else "No image found in clipboard"
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            scope.launch(Dispatchers.IO) {
+                val newPending = mutableListOf<PendingImage>()
+                for ((index, uri) in uris.withIndex()) {
+                    try {
+                        val mime = context.contentResolver.getType(uri) ?: "image/png"
+                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val ext = if (mime.contains("jpeg") || mime.contains("jpg")) "jpg" else "png"
+                            val name = "photo-${System.currentTimeMillis()}-$index.$ext"
+                            newPending.add(PendingImage(name, mime, bytes, uri))
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                if (newPending.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        pendingImages = pendingImages + newPending
+                    }
+                }
+            }
+        }
+    }
+
+    fun submit(steerImmediate: Boolean? = null, enqueueOnly: Boolean = false) {
+        val msgText = text.trim()
+        val cPath = contextPath.trim().ifBlank { null }
+        if (msgText.isEmpty() && pendingImages.isEmpty() && cPath == null) return
+
+        scope.launch {
+            isUploading = true
+            val uploadedRefs = mutableListOf<ContextReference>()
+            for (img in pendingImages) {
+                val ref = vm.uploadAttachment(img.name, img.mime, img.bytes)
+                if (ref != null) {
+                    uploadedRefs.add(ref)
+                }
+            }
+            isUploading = false
+            pendingImages = emptyList()
+
+            val finalText = if (msgText.isNotBlank()) msgText else if (uploadedRefs.isNotEmpty()) "Attached image." else ""
+
+            when {
+                steerImmediate == true -> vm.steer(finalText, true, cPath, uploadedRefs)
+                steerImmediate == false -> vm.steer(finalText, false, cPath, uploadedRefs)
+                enqueueOnly || busy -> vm.queue(finalText, cPath, uploadedRefs)
+                else -> vm.send(finalText, cPath, uploadedRefs)
+            }
+            text = ""
+        }
+    }
+
+    var hasClipboardImage by remember { mutableStateOf(false) }
+    DisposableEffect(clipboard) {
+        fun update() {
+            hasClipboardImage = try {
+                val desc = clipboard?.primaryClipDescription
+                val hasMime = desc?.hasMimeType("image/*") == true
+                if (hasMime) {
+                    true
+                } else {
+                    val clip = clipboard?.primaryClip
+                    clip != null && (0 until clip.itemCount).any { i ->
+                        val item = clip.getItemAt(i)
+                        item?.uri != null ||
+                        item?.text?.startsWith("data:image/", ignoreCase = true) == true ||
+                        item?.htmlText?.contains("data:image/", ignoreCase = true) == true
+                    }
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+        update()
+        val listener = ClipboardManager.OnPrimaryClipChangedListener { update() }
+        clipboard?.addPrimaryClipChangedListener(listener)
+        onDispose {
+            clipboard?.removePrimaryClipChangedListener(listener)
+        }
+    }
+
+    Surface(tonalElevation = 4.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            val queuedList = vm.active()?.queued.orEmpty()
+            if (queuedList.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 2.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Schedule,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Task Queue (${queuedList.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (!busy) {
+                                FilledTonalButton(
+                                    onClick = { vm.startQueue() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        "Run next",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            TextButton(
+                                onClick = { vm.clearQueue() },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(
+                                    "Clear all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    queuedList.forEachIndexed { idx, item ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Schedule,
+                                            null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "Queued #${idx + 1}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        if (idx > 0) {
+                                            IconButton(
+                                                onClick = { vm.promoteQueue(idx) },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.ArrowUpward,
+                                                    contentDescription = "Move to top",
+                                                    modifier = Modifier.size(14.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+
+                                        FilledTonalButton(
+                                            onClick = { vm.pushQueue(idx) },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(28.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.RocketLaunch,
+                                                null,
+                                                modifier = Modifier.size(12.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(
+                                                "Push now",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = {
+                                                text = item.text
+                                                vm.dequeue(idx)
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                "Edit",
+                                                modifier = Modifier.size(14.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { vm.dequeue(idx) },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                "Remove",
+                                                modifier = Modifier.size(14.dp),
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Text(
+                                    text = item.text,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+
+                                if (item.context.isNotEmpty()) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                                    ) {
+                                        for (ctxRef in item.context) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.surface,
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                            ) {
+                                                Text(
+                                                    text = ctxRef.name?.ifBlank { null } ?: ctxRef.path.substringAfterLast('/'),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (text.startsWith("/")) {
+                val query = text.removePrefix("/").trim()
+                val filteredSkills = remember(state.skills, query) {
+                    if (query.isBlank()) state.skills
+                    else state.skills.filter {
+                        it.name.contains(query, ignoreCase = true) || it.description.contains(query, ignoreCase = true)
+                    }
+                }
+                if (filteredSkills.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(filteredSkills, key = { it.name }) { skill ->
+                            Surface(
+                                onClick = { text = "/${skill.name} " },
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Terminal,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "/${skill.name}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                        if (skill.description.isNotBlank()) {
+                                            Text(
+                                                text = skill.description,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontSize = 10.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                                                modifier = Modifier.widthIn(max = 180.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (hasClipboardImage && pendingImages.isEmpty()) {
+                Surface(
+                    onClick = { pasteImageFromClipboard() },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Spacer(Modifier.width(6.dp))
+                        Text(text = "Paste image from clipboard", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+            }
+
+            if (pendingImages.isNotEmpty()) {
+                LazyRow(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(pendingImages) { img ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Box(modifier = Modifier.size(64.dp)) {
+                                AsyncImage(
+                                    model = img.uri ?: img.bytes,
+                                    contentDescription = img.name,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                                IconButton(
+                                    onClick = { pendingImages = pendingImages.filterNot { it === img } },
+                                    modifier = Modifier.align(Alignment.TopEnd).size(22.dp).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), CircleShape)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (showContext) {
+                OutlinedTextField(
+                    value = contextPath,
+                    onValueChange = { contextPath = it },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    label = { Text("Vault note or file path") },
+                    singleLine = true
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(
+                                text = if (busy) "Queue next message..." else "Message...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        },
+                        minLines = 1,
+                        maxLines = 5,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { showContext = !showContext },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.AttachFile,
+                                    contentDescription = "Attach vault note",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (showContext || contextPath.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    photoPicker.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Image,
+                                    contentDescription = "Choose image from gallery",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { pasteImageFromClipboard() },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentPaste,
+                                    contentDescription = "Paste image from clipboard",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (isUploading) {
+                                Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                }
+                            } else {
+                                if (busy) {
+                                    IconButton(
+                                        onClick = vm::cancel,
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Stop, "Stop", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.error)
+                                    }
+                                    IconButton(
+                                        onClick = { submit(steerImmediate = true) },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Bolt, "Steer now", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.secondary)
+                                    }
+                                }
+                                if (!busy && (text.isNotBlank() || pendingImages.isNotEmpty() || contextPath.isNotBlank())) {
+                                    IconButton(
+                                        onClick = { submit(enqueueOnly = true) },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.PlaylistAdd,
+                                            contentDescription = "Add to queue",
+                                            modifier = Modifier.size(22.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                FilledIconButton(
+                                    onClick = { submit() },
+                                    enabled = text.isNotBlank() || pendingImages.isNotEmpty() || contextPath.isNotBlank(),
+                                    modifier = Modifier.size(36.dp),
+                                    colors = IconButtonDefaults.filledIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    )
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = if (busy) "Queue" else "Send",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

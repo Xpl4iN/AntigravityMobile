@@ -73,9 +73,10 @@ private fun orderAgents(conversations: List<RemoteConversation>): List<AgentRowM
     return rows
 }
 
-private fun stateOf(chat: RemoteConversation): String = chat.agentState ?: if (chat.busy) "running" else "idle"
+// Shared with the Agents screen, so both lists name and colour a state the same way.
+internal fun stateOf(chat: RemoteConversation): String = chat.agentState ?: if (chat.busy) "running" else "idle"
 
-private fun stateLabel(state: String): String = when (state) {
+internal fun stateLabel(state: String): String = when (state) {
     "approval" -> "needs approval"
     "running" -> "running"
     "waiting" -> "waiting to resume"
@@ -85,7 +86,7 @@ private fun stateLabel(state: String): String = when (state) {
     else -> ""
 }
 
-@Composable private fun stateColor(state: String): Color = when (state) {
+@Composable internal fun stateColor(state: String): Color = when (state) {
     "approval" -> Color(0xFFE5A00D)
     "running" -> MaterialTheme.colorScheme.primary
     "waiting" -> Color(0xFF0880E8)
@@ -154,7 +155,7 @@ private fun stateLabel(state: String): String = when (state) {
     }
 }
 
-private fun leaseModeText(mode: String?): String = when (mode) {
+internal fun leaseModeText(mode: String?): String = when (mode) {
     "block" -> "Other agents are refused and told to work elsewhere."
     "off" -> "Same-file protection is off."
     else -> "Other agents ask before writing a held file."

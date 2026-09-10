@@ -29,8 +29,8 @@ import de.xyourp.antigravitymobile.data.AppRepository
 import de.xyourp.antigravitymobile.net.GitStatusDetails
 import de.xyourp.antigravitymobile.net.GitStatusEntry
 import de.xyourp.antigravitymobile.net.VaultFileResponse
-import de.xyourp.antigravitymobile.ui.chat.MarkdownInlineText
-import de.xyourp.antigravitymobile.ui.chat.MarkdownText
+import de.xyourp.antigravitymobile.ui.chat.markdown.MarkdownInlineText
+import de.xyourp.antigravitymobile.ui.chat.markdown.MarkdownText
 import kotlinx.coroutines.launch
 
 private enum class WorktreeFilter {

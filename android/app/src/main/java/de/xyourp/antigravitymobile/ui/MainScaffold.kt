@@ -38,9 +38,10 @@ import de.xyourp.antigravitymobile.ui.chat.ChatViewModel
 import de.xyourp.antigravitymobile.ui.chat.FullScreenFileViewer
 import de.xyourp.antigravitymobile.ui.files.FilesScreen
 import de.xyourp.antigravitymobile.ui.git.GitScreen
+import de.xyourp.antigravitymobile.ui.agents.AgentsScreen
 import kotlinx.coroutines.launch
 
-enum class MainTab { CHATS, FILES, GIT }
+enum class MainTab { CHATS, AGENTS, FILES, GIT }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun MainScaffold(vm: ChatViewModel, connected: Boolean, display: DisplayPreferences, onSettings: () -> Unit) {
@@ -119,6 +120,7 @@ enum class MainTab { CHATS, FILES, GIT }
                                     MainTab.CHATS -> active?.title?.ifBlank { "New chat" } ?: "Obsidian Agent"
                                     MainTab.FILES -> "Vault Files"
                                     MainTab.GIT -> "Git Changes"
+                                    MainTab.AGENTS -> "Agents"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
@@ -395,6 +397,12 @@ enum class MainTab { CHATS, FILES, GIT }
                             label = { Text("Agent") }
                         )
                         NavigationBarItem(
+                            selected = currentTab == MainTab.AGENTS,
+                            onClick = { currentTab = MainTab.AGENTS },
+                            icon = { Icon(Icons.Default.Groups, contentDescription = "Agents") },
+                            label = { Text("Agents") }
+                        )
+                        NavigationBarItem(
                             selected = currentTab == MainTab.FILES,
                             onClick = { currentTab = MainTab.FILES },
                             icon = {
@@ -430,6 +438,7 @@ enum class MainTab { CHATS, FILES, GIT }
                     MainTab.CHATS -> ChatScreen(active, vm, display, Modifier.weight(1f))
                     MainTab.FILES -> FilesScreen(vm.repo, onOpenFile = vm::openFile, Modifier.weight(1f))
                     MainTab.GIT -> GitScreen(vm.repo, onOpenFile = vm::openFile, Modifier.weight(1f))
+                    MainTab.AGENTS -> AgentsScreen(vm, onOpenChat = { id -> vm.switch(id); currentTab = MainTab.CHATS }, Modifier.weight(1f))
                 }
             }
         }

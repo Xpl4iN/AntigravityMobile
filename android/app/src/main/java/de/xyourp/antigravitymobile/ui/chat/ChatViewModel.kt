@@ -23,6 +23,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 data class ChatState(
     val snapshot: RemoteSnapshot = RemoteSnapshot(),
@@ -45,6 +46,19 @@ data class ChatState(
     val isGeneratingCommitMessage: Boolean = false,
     val skills: List<de.xyourp.antigravitymobile.net.SkillEntry> = emptyList(),
     val composerText: String = ""
+)
+
+/**
+ * Commands whose effect only shows up in the next snapshot, so the phone asks
+ * for one straight away. Turn-level commands (send, steer, cancel) stream their
+ * effect through turn frames instead.
+ */
+private val REFRESHING_COMMANDS = setOf(
+    "switch-conversation", "new", "switch-model", "approve", "reject",
+    "queue", "dequeue", "push-queue", "promote-queue", "remove-queue", "move-queue", "update-queue", "clear-queue", "start-queue",
+    "delete-conversation", "clear-conversation", "rename-conversation",
+    "set-master", "assign-master", "release-lease", "open-agent", "close-agent",
+    "spawn-crew", "plan-task", "schedule-add", "schedule-remove", "schedule-toggle"
 )
 
 /** Events that change the streaming assistant message; everything else waits for a snapshot. */
@@ -302,7 +316,7 @@ class ChatViewModel(val repo: AppRepository) : ViewModel() {
         extra: JsonObject? = null
     ) = viewModelScope.launch {
         runCatching { repo.api.command(name, id, text, timing, approvalId, model, effort, providerId, contextPath, attachments, index, extra) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
-        if (name in setOf("switch-conversation", "new", "switch-model", "approve", "reject", "queue", "dequeue", "push-queue", "promote-queue", "clear-queue", "start-queue", "delete-conversation", "clear-conversation", "rename-conversation", "set-master", "assign-master", "release-lease", "close-agent")) refresh()
+        if (name in REFRESHING_COMMANDS) refresh()
     }
 
     // --- parallel agents (OAC ADR 0012) ---
@@ -317,6 +331,48 @@ class ChatViewModel(val repo: AppRepository) : ViewModel() {
     fun assignMaster(id: String, masterId: String?) = command("assign-master", id, extra = buildJsonObject { put("masterId", masterId?.let { JsonPrimitive(it) } ?: JsonNull) })
     fun releaseLease(path: String) = command("release-lease", null, extra = buildJsonObject { put("path", path) })
     fun closeAgent(id: String) = command("close-agent", id)
+
+    // --- the Agents screen acts on any conversation, not only the active chat ---
+
+    fun approveFor(conversationId: String, approvalId: String, approved: Boolean) =
+        command(if (approved) "approve" else "reject", conversationId, approvalId = approvalId)
+    fun sendTo(conversationId: String, text: String) = command("send", conversationId, text = text)
+    fun queueTo(conversationId: String, text: String) = command("queue", conversationId, text = text)
+    fun steerTo(conversationId: String, text: String, immediate: Boolean) =
+        command("steer", conversationId, text = text, timing = if (immediate) "immediate" else "after-current-tool")
+    fun cancelFor(conversationId: String) = command("cancel", conversationId)
+    fun startQueueFor(conversationId: String) = command("start-queue", conversationId)
+    fun clearQueueFor(conversationId: String) = command("clear-queue", conversationId)
+    fun removeQueued(conversationId: String, index: Int) = command("remove-queue", conversationId, index = index)
+    fun promoteQueued(conversationId: String, index: Int) = command("promote-queue", conversationId, index = index)
+    fun moveQueued(conversationId: String, fromIndex: Int, toIndex: Int) =
+        command("move-queue", conversationId, extra = buildJsonObject { put("fromIndex", fromIndex); put("toIndex", toIndex) })
+    fun updateQueued(conversationId: String, index: Int, text: String) = command("update-queue", conversationId, text = text, index = index)
+
+    /** Starts every member of a crew template under the master [masterId]. */
+    fun spawnCrew(masterId: String, templateId: String) = command("spawn-crew", masterId, extra = buildJsonObject { put("templateId", templateId) })
+    /** Sets one task on a master's plan board to todo, doing, done or blocked. */
+    fun setPlanTaskStatus(masterId: String, taskId: String, status: String) =
+        command("plan-task", masterId, extra = buildJsonObject { put("taskId", taskId); put("status", status) })
+
+    // Scheduled runs belong to the desktop, not to a conversation, so no conversationId is sent.
+    fun addSchedule(name: String, prompt: String, time: String, repeat: String, date: String?, providerId: String, asMaster: Boolean, templateId: String?, enabled: Boolean = true) =
+        command("schedule-add", null, extra = buildJsonObject {
+            putJsonObject("schedule") {
+                put("name", name)
+                put("prompt", prompt)
+                put("time", time)
+                put("repeat", repeat)
+                date?.let { put("date", it) }
+                put("providerId", providerId)
+                put("asMaster", asMaster)
+                templateId?.let { put("templateId", it) }
+                put("enabled", enabled)
+            }
+        })
+    fun removeSchedule(scheduleId: String) = command("schedule-remove", null, extra = buildJsonObject { put("scheduleId", scheduleId) })
+    fun toggleSchedule(scheduleId: String, enabled: Boolean) =
+        command("schedule-toggle", null, extra = buildJsonObject { put("scheduleId", scheduleId); put("enabled", enabled) })
     fun setComposerText(text: String) {
         mutable.value = mutable.value.copy(composerText = text)
     }

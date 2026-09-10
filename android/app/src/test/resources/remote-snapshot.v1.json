@@ -1,0 +1,143 @@
+{
+  "protocolVersion": 1,
+  "activeConversationId": "conv-master",
+  "conversations": [
+    {
+      "id": "conv-master",
+      "title": "Ship the parser",
+      "providerId": "claude",
+      "model": "sonnet",
+      "effort": "medium",
+      "role": "master",
+      "createdAt": 1789000000000,
+      "updatedAt": 1789000300000,
+      "explicitContext": [],
+      "queue": [],
+      "messages": [
+        { "id": "user-1", "role": "user", "text": "Split the parser work across the crew.", "createdAt": 1789000000000, "tools": [], "approvals": [], "context": [] },
+        { "id": "assistant-1", "role": "assistant", "text": "Plan ready.\n```oac\n{\"action\":\"plan\",\"items\":[{\"id\":\"t1\",\"title\":\"Implement the tokenizer\"}]}\n```", "createdAt": 1789000010000, "tools": [], "approvals": [], "context": [] },
+        { "id": "system-1", "role": "system", "text": "Orchestration: spawned \"Implementer\" (codex) · planned 2 tasks", "createdAt": 1789000011000, "tools": [], "approvals": [], "context": [] },
+        { "id": "user-2", "role": "user", "text": "[OAC worker report] \"Implementer\" (id=conv-impl) finished.\nFiles written: Machine/parser/tokenizer.ts\n\nTokenizer implemented; 14 tests pass.", "createdAt": 1789000200000, "tools": [], "approvals": [], "context": [] }
+      ],
+      "plan": {
+        "updatedAt": 1789000250000,
+        "items": [
+          { "id": "t1", "title": "Implement the tokenizer", "status": "done", "owner": "conv-impl", "files": ["Machine/parser/tokenizer.ts"] },
+          { "id": "t2", "title": "Review the tokenizer", "status": "doing", "owner": "conv-review", "dependsOn": ["t1"] },
+          { "id": "t3", "title": "Write parser docs", "status": "todo" },
+          { "id": "t4", "title": "Benchmark", "status": "blocked", "note": "Needs a fixture corpus" }
+        ]
+      },
+      "agentState": "running",
+      "open": true,
+      "busy": true,
+      "queued": []
+    },
+    {
+      "id": "conv-impl",
+      "title": "Implementer",
+      "providerId": "codex",
+      "model": "gpt-5.6-sol",
+      "masterId": "conv-master",
+      "crewRole": "implementer",
+      "brief": "You implement the changes the master assigns.",
+      "createdAt": 1789000011000,
+      "updatedAt": 1789000290000,
+      "explicitContext": [],
+      "queue": [{ "id": "queue-1", "text": "Add error recovery", "context": [], "createdAt": 1789000280000 }],
+      "messages": [
+        { "id": "user-3", "role": "user", "text": "Implement the tokenizer.", "createdAt": 1789000011000, "tools": [], "approvals": [], "context": [] },
+        {
+          "id": "assistant-3", "role": "assistant", "text": "", "createdAt": 1789000012000, "streaming": true, "context": [],
+          "tools": [{ "id": "tool-1", "name": "apply_patch", "state": "running", "updates": [], "input": { "path": "Machine/parser/tokenizer.ts" } }],
+          "approvals": [{ "id": "codex-approval-7", "path": "Machine/parser/grammar.md", "diff": "+ rule", "decision": "pending", "kind": "write", "reason": "Machine/parser/grammar.md is being edited by agent \"Docs\". Approve to write anyway, or reject to keep the other agent's changes safe." }]
+        }
+      ],
+      "worktree": { "repo": "C:/XyourP/parser", "path": "C:/XyourP/.oac-worktrees/parser-implementer", "branch": "oac/implementer", "base": "main", "createdAt": 1789000011000 },
+      "agentState": "approval",
+      "open": true,
+      "busy": true,
+      "held": false,
+      "pendingSteer": { "text": "Use the new grammar" },
+      "queued": [{ "id": "queue-1", "text": "Add error recovery", "context": [], "createdAt": 1789000280000 }]
+    },
+    {
+      "id": "conv-review",
+      "title": "Reviewer",
+      "providerId": "claude",
+      "masterId": "conv-master",
+      "crewRole": "reviewer",
+      "createdAt": 1789000011000,
+      "updatedAt": 1789000100000,
+      "explicitContext": [],
+      "queue": [{ "id": "queue-2", "text": "Review the tokenizer", "context": [], "createdAt": 1789000100000 }],
+      "messages": [],
+      "agentState": "waiting",
+      "open": true,
+      "busy": false,
+      "held": true,
+      "queued": [{ "id": "queue-2", "text": "Review the tokenizer", "context": [], "createdAt": 1789000100000 }]
+    },
+    {
+      "id": "conv-solo",
+      "title": "Weekly notes cleanup",
+      "providerId": "antigravity",
+      "model": "gemini-3.8-flash",
+      "createdAt": 1788990000000,
+      "updatedAt": 1788999000000,
+      "explicitContext": [],
+      "queue": [],
+      "messages": [
+        { "id": "user-4", "role": "user", "text": "Tidy the weekly notes.", "createdAt": 1788990000000, "tools": [], "approvals": [], "context": [] },
+        { "id": "assistant-4", "role": "assistant", "text": "Done.", "createdAt": 1788999000000, "tools": [], "approvals": [], "context": [] }
+      ],
+      "agentState": "unread",
+      "open": false,
+      "busy": false,
+      "queued": []
+    }
+  ],
+  "providers": [
+    { "id": "claude", "label": "Anthropic Claude", "models": [{ "id": "sonnet", "label": "Sonnet", "efforts": ["low", "medium", "high"] }] },
+    { "id": "codex", "label": "OpenAI Codex", "models": [{ "id": "gpt-5.6-sol", "label": "GPT-5.6 Sol", "efforts": ["low", "medium", "high"] }] }
+  ],
+  "theme": { "tokens": { "--interactive-accent": "#7f6df2" }, "observedAtMs": 1789000300000 },
+  "power": { "hasBattery": true, "percent": 81, "powerSource": "battery", "chargingState": "discharging", "observedAtMs": 1789000300000, "secondsRemaining": 9000 },
+  "quota": null,
+  "leases": [
+    { "path": "Machine/parser/tokenizer.ts", "holderId": "conv-impl", "holderTitle": "Implementer", "acquiredAt": 1789000020000, "reserved": false },
+    { "path": "Machine/parser/README.md", "holderId": "conv-review", "holderTitle": "Reviewer", "acquiredAt": 1789000015000, "reserved": true }
+  ],
+  "leaseMode": "ask",
+  "providerLoad": {
+    "claude": { "running": 3, "limit": 3, "waiting": 1 },
+    "codex": { "running": 1, "limit": 3, "waiting": 0 },
+    "antigravity": { "running": 0, "limit": 0, "waiting": 0 }
+  },
+  "reviewGate": true,
+  "crewTemplates": [
+    {
+      "id": "build-review-test",
+      "name": "Build, review, test",
+      "members": [
+        { "title": "Implementer", "providerId": "codex", "crewRole": "implementer", "brief": "You implement the changes the master assigns." },
+        { "title": "Reviewer", "providerId": "claude", "crewRole": "reviewer" }
+      ]
+    }
+  ],
+  "scheduledRuns": [
+    {
+      "id": "run-1",
+      "name": "Nightly dependency audit",
+      "prompt": "Audit the dependencies of every project and report risks.",
+      "time": "22:30",
+      "repeat": "weekdays",
+      "providerId": "claude",
+      "asMaster": true,
+      "templateId": "research-pair",
+      "enabled": true,
+      "lastRunAt": 1788917400000,
+      "lastConversationId": "conv-solo"
+    }
+  ]
+}

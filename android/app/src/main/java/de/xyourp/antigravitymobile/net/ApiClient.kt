@@ -4,6 +4,7 @@ import de.xyourp.antigravitymobile.data.ConnectionSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -56,8 +57,11 @@ class ApiClient(private val settingsProvider: () -> ConnectionSettings) {
         return json.decodeFromString(responseBody)
     }
 
-    suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null, contextPath: String? = null, attachments: List<ContextReference> = emptyList(), index: Int? = null): ActionResult {
-        val body = buildJsonObject { 
+    suspend fun command(name: String, conversationId: String? = null, text: String? = null, timing: String? = null, approvalId: String? = null, model: String? = null, effort: String? = null, providerId: String? = null, contextPath: String? = null, attachments: List<ContextReference> = emptyList(), index: Int? = null, extra: JsonObject? = null): ActionResult {
+        val body = buildJsonObject {
+            // Command-specific fields (role, masterId, enabled, path) that the
+            // common parameters do not cover. A JSON null in `extra` is sent as null.
+            extra?.forEach { (key, value) -> put(key, value) }
             conversationId?.let { put("conversationId", it) }
             text?.let { put("text", it) }
             timing?.let { put("timing", it) }

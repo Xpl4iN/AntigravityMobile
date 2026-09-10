@@ -17,7 +17,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.put
 
 data class ChatState(
     val snapshot: RemoteSnapshot = RemoteSnapshot(),
@@ -41,6 +46,9 @@ data class ChatState(
     val skills: List<de.xyourp.antigravitymobile.net.SkillEntry> = emptyList(),
     val composerText: String = ""
 )
+
+/** Events that change the streaming assistant message; everything else waits for a snapshot. */
+private val MESSAGE_EVENTS = setOf("assistant-delta", "assistant-message", "tool-start", "tool-update", "tool-end", "approval-request", "subagent-update", "turn-complete", "error")
 
 class ChatViewModel(val repo: AppRepository) : ViewModel() {
     private val mutable = MutableStateFlow(ChatState())
@@ -290,11 +298,25 @@ class ChatViewModel(val repo: AppRepository) : ViewModel() {
         effort: String? = null,
         contextPath: String? = null,
         attachments: List<de.xyourp.antigravitymobile.net.ContextReference> = emptyList(),
-        index: Int? = null
+        index: Int? = null,
+        extra: JsonObject? = null
     ) = viewModelScope.launch {
-        runCatching { repo.api.command(name, id, text, timing, approvalId, model, effort, providerId, contextPath, attachments, index) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
-        if (name in setOf("switch-conversation", "new", "switch-model", "approve", "reject", "queue", "dequeue", "push-queue", "promote-queue", "clear-queue", "start-queue", "delete-conversation", "clear-conversation", "rename-conversation")) refresh()
+        runCatching { repo.api.command(name, id, text, timing, approvalId, model, effort, providerId, contextPath, attachments, index, extra) }.onFailure { mutable.value = mutable.value.copy(error = it.message) }
+        if (name in setOf("switch-conversation", "new", "switch-model", "approve", "reject", "queue", "dequeue", "push-queue", "promote-queue", "clear-queue", "start-queue", "delete-conversation", "clear-conversation", "rename-conversation", "set-master", "assign-master", "release-lease", "close-agent")) refresh()
     }
+
+    // --- parallel agents (OAC ADR 0012) ---
+
+    /** Starts a chat on the desktop; `master` makes it a master agent, `masterId` puts it in a crew. */
+    fun createAgent(provider: String, model: String?, effort: String?, master: Boolean, masterId: String? = null) =
+        command("new", providerId = provider, model = model, effort = effort, extra = buildJsonObject {
+            if (master) put("role", "master")
+            masterId?.let { put("masterId", it) }
+        })
+    fun setMaster(id: String, enabled: Boolean) = command("set-master", id, extra = buildJsonObject { put("enabled", enabled) })
+    fun assignMaster(id: String, masterId: String?) = command("assign-master", id, extra = buildJsonObject { put("masterId", masterId?.let { JsonPrimitive(it) } ?: JsonNull) })
+    fun releaseLease(path: String) = command("release-lease", null, extra = buildJsonObject { put("path", path) })
+    fun closeAgent(id: String) = command("close-agent", id)
     fun setComposerText(text: String) {
         mutable.value = mutable.value.copy(composerText = text)
     }
@@ -321,6 +343,10 @@ class ChatViewModel(val repo: AppRepository) : ViewModel() {
         }
     }
     private fun reduce(c: RemoteConversation, e: AgentEvent): RemoteConversation {
+        // Status, queue and transcript notices belong to the conversation, not to
+        // a message. Folding them in would open an empty "Agent" bubble and mark
+        // an idle chat busy until the next snapshot corrects it.
+        if (e.type !in MESSAGE_EVENTS) return c
         val messages = c.messages.toMutableList()
         fun assistant(): Int { val found = messages.indexOfLast { it.role == "assistant" && it.streaming }; if (found >= 0) return found; messages += DisplayMessage("remote-${System.currentTimeMillis()}", "assistant", streaming = true); return messages.lastIndex }
         val index = assistant(); var message = messages[index]

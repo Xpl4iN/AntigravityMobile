@@ -192,7 +192,14 @@ private fun Int?.orEmptyIndex() = this ?: -1
     }
 }
 
+/** Prefix OAC puts on the message a crew agent's result reaches its master in (ADR 0012). */
+private const val WORKER_REPORT_MARKER = "[OAC worker report]"
+
 @Composable private fun Message(message: DisplayMessage, vm: ChatViewModel, display: DisplayPreferences) {
+    // Plugin notes (orchestration receipts, provider switches) and crew reports
+    // are not the user's words or the agent's answer, so they get their own look.
+    if (message.role == "system") { PluginNote(message.text); return }
+    if (message.role == "user" && message.text.startsWith(WORKER_REPORT_MARKER)) { CrewReport(message.text, vm); return }
     val user = message.role == "user"
     var previewImageUrl by remember { mutableStateOf<String?>(null) }
 
@@ -261,6 +268,54 @@ private fun Int?.orEmptyIndex() = this ?: -1
 
     previewImageUrl?.let { url ->
         ImagePreviewDialog(url, vm.deviceToken) { previewImageUrl = null }
+    }
+}
+
+@Composable private fun PluginNote(text: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(Icons.Default.Info, null, Modifier.size(14.dp).padding(top = 2.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * A crew agent's result as its master received it. The first line names the
+ * agent and the outcome; the rest is its final reply, collapsed by default
+ * because a busy crew produces several of these per master turn.
+ */
+@Composable private fun CrewReport(text: String, vm: ChatViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val reports = remember(text) { text.split("\n\n$WORKER_REPORT_MARKER").mapIndexed { i, part -> if (i == 0) part else WORKER_REPORT_MARKER + part } }
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Default.Groups, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                Text(
+                    if (reports.size == 1) "Crew report" else "${reports.size} crew reports",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (expanded) "Collapse" else "Expand", Modifier.size(18.dp))
+            }
+            reports.forEach { report ->
+                val headline = report.removePrefix(WORKER_REPORT_MARKER).lineSequence().first().trim()
+                Text(headline, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                if (expanded) {
+                    val body = report.lineSequence().drop(1).joinToString("\n").trim()
+                    if (body.isNotBlank()) MarkdownText(body, vm)
+                }
+            }
+        }
     }
 }
 

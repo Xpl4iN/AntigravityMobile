@@ -54,6 +54,7 @@ enum class MainTab { CHATS, FILES, GIT }
     var currentTab by remember { mutableStateOf(MainTab.CHATS) }
     var showModel by remember { mutableStateOf(false) }
     var showNew by remember { mutableStateOf(false) }
+    var showNewMaster by remember { mutableStateOf(false) }
     var showShare by remember { mutableStateOf(false) }
     var renameDialogOpen by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
@@ -75,17 +76,11 @@ enum class MainTab { CHATS, FILES, GIT }
                     Text("Chats", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text("${snapshot.conversations.size} conversations", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                IconButton({ showNewMaster = true }) { Icon(Icons.Default.WorkspacePremium, "New master agent") }
                 IconButton({ showNew = true }) { Icon(Icons.Default.Add, "New chat") }
             }
             HorizontalDivider()
-            LazyColumn(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(snapshot.conversations.sortedByDescending { it.updatedAt }, key = { it.id }) { chat ->
-                    NavigationDrawerItem(label = { Column {
-                        Text(chat.title.ifBlank { "New chat" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${chat.providerId} · ${chat.model ?: "default"}${if (chat.busy) " · working" else ""}", style = MaterialTheme.typography.labelSmall, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } }, selected = chat.id == active?.id, onClick = { vm.switch(chat.id); scope.launch { drawer.close() } }, icon = { Icon(Icons.Default.ChatBubbleOutline, null) })
-                }
-            }
+            AgentDrawerList(snapshot, active?.id, vm) { id -> vm.switch(id); scope.launch { drawer.close() } }
         }
     }) {
         val isImeVisible = WindowInsets.ime.asPaddingValues().calculateBottomPadding() > 0.dp
@@ -441,6 +436,7 @@ enum class MainTab { CHATS, FILES, GIT }
     }
 
     if (showNew) AgentPickerDialog("New chat", snapshot.providers, onDismiss = { showNew = false }) { provider, model, effort -> vm.create(provider, model, effort); showNew = false }
+    if (showNewMaster) AgentPickerDialog("New master agent", snapshot.providers, onDismiss = { showNewMaster = false }) { provider, model, effort -> vm.createAgent(provider, model, effort, master = true); showNewMaster = false }
     if (showModel && active != null) AgentPickerDialog("Agent, model and effort", snapshot.providers, initialProvider = active.providerId, initialModel = active.model, initialEffort = active.effort, onDismiss = { showModel = false }) { provider, model, effort -> vm.switchModel(provider, model.orEmpty(), effort); showModel = false }
 
     if (state.showCommitSheet) {

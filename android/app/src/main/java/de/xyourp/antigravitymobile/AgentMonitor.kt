@@ -45,6 +45,8 @@ object AgentMonitor {
                     // desktop; one notification per crew agent would bury the master's.
                     "turn-complete" -> if (chat?.masterId == null) notify(app, "$name finished", "The agent completed its turn.", frame.conversationId, null)
                     "error" -> notify(app, "$name stopped with an error", event.message.orEmpty(), frame.conversationId, null)
+                    // The desktop's resume rules ask before replaying a turn that hit a quota limit.
+                    "resume-ready" -> frame.conversationId?.let { notifyResume(app, name, event.text.orEmpty(), it) }
                 }
             }
         }.launchIn(scope)
@@ -57,6 +59,15 @@ object AgentMonitor {
             builder.addAction(0, "Reject", AgentActionReceiver.pendingIntent(context, false, conversationId, approvalId))
         }
         runCatching { NotificationManagerCompat.from(context).notify((conversationId + approvalId + title).hashCode(), builder.build()) }
+    }
+    private fun notifyResume(context: Context, name: String, text: String, conversationId: String) {
+        val open = PendingIntent.getActivity(context, conversationId.hashCode(), Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val body = text.ifBlank { "The quota limit has reset. Resume the failed turn?" }
+        val builder = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_stat_agent).setContentTitle("$name: limit reset").setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true).setContentIntent(open)
+            .addAction(0, "Resume", AgentActionReceiver.commandIntent(context, "resume-pending", conversationId))
+            .addAction(0, "Dismiss", AgentActionReceiver.commandIntent(context, "dismiss-resume", conversationId))
+        runCatching { NotificationManagerCompat.from(context).notify((conversationId + "resume").hashCode(), builder.build()) }
     }
     private const val CHANNEL = "oac_agent_alerts"
 }

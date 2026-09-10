@@ -226,9 +226,12 @@ enum class MainTab { CHATS, AGENTS, FILES, GIT }
                                 val ctxSummary = remember(quota) {
                                     if (quota == null) "Usage"
                                     else {
-                                        val pct = quota.contextRemainingPercent?.let { "${100 - it}% ctx" } ?: ""
-                                        val primary = "${quota.primaryRemainingPercent}%"
-                                        if (pct.isNotEmpty()) "$pct · $primary" else "Quota $primary"
+                                        // Both figures say which way they count: context is shown as
+                                        // used, the allowance as left, so a bare number cannot be
+                                        // read backwards.
+                                        val pct = quota.contextRemainingPercent?.let { "ctx ${100 - it}% used" } ?: ""
+                                        val primary = "${quota.primaryRemainingPercent}% left"
+                                        if (pct.isNotEmpty()) "$pct · $primary" else primary
                                     }
                                 }
                                 Surface(

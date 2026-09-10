@@ -76,6 +76,8 @@
       "open": true,
       "busy": false,
       "held": true,
+      "resumeMode": "ask",
+      "pendingResume": { "reason": "quota", "phase": "ready", "note": "The limit has reset. Resume the failed turn?", "resetAtMs": 1789093883000, "limit": "Weekly limit" },
       "queued": [{ "id": "queue-2", "text": "Review the tokenizer", "context": [], "createdAt": 1789000100000 }]
     },
     {

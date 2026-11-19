@@ -1,5 +1,8 @@
 # Antigravity Mobile
 
+> [!CAUTION]
+> **Deprecated — Xpl4iN fork.** This fork is no longer part of the active XyourP development roadmap and is retained for reference only. Do not use it as the basis for new XyourP work. This notice applies **only to this fork**, not to the upstream `AvenalJ/AntigravityMobile` project.
+
 Mobile dashboard and admin panel for [Antigravity IDE](https://antigravity.google). Monitor conversations, manage your agent, and get notified — all from your phone.
 
 <p align="center">
